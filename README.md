@@ -2,6 +2,8 @@
 `07/17/2024`
 R2R was designed to bridge the gap between local LLM experimentation and scalable, production-ready Retrieval-Augmented Generation (RAG). R2R provides a comprehensive and SOTA RAG system for developers, built around a RESTful API for ease of use.
 
+The R2R engine is setup to use the hosted DeweyLearn `supabase` DB, `gtp-4o`, and `OpenAI small embeddings` model, see settings below and in the `.env` file.
+
 ## Buidling and Running
 We are only using the R2R engine in docker and it API on port `9311`. To build and run the R2R engine, run the following commands:
 
@@ -14,12 +16,12 @@ export POSTGRES_PORT=$YOUR_POSTGRES_PORT
 export POSTGRES_DBNAME=$YOUR_POSTGRES_DBNAME
 export POSTGRES_VECS_COLLECTION=$MY_VECS_COLLECTION
 
-docker-compose up -d
-
 docker build -t r2r .
 
+docker-compose up -d
+
 ```
-Build the docker container
+**Build and run the docker container**
 ```
 docker run -d \
   --name DeweyLearnR2R \
@@ -28,6 +30,24 @@ docker run -d \
   -p 9311:9311 \
   -v /home/deweylearn/DEV/DeweyLearnK12/data:/app/data \
   deweylearn-r2r
+```
+Note: the container has a mapped volume that points at the data directory in the host machine. 
+
+## Scaling the service using Docker Swarm
+This is currently not working, not sure why `07/18/2024` will leave it for now.
+```
+Ensure you're in swarm mode:
+docker swarm init
+
+Deploy the stack:
+docker stack deploy -c docker-compose.yml deweylearn-stack
+
+To check the status of your services:
+docker service ls
+
+To scale up or down:
+docker service scale deweylearn-stack_r2r=5
+
 ```
 
 
