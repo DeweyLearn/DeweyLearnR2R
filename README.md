@@ -4,6 +4,10 @@ R2R was designed to bridge the gap between local LLM experimentation and scalabl
 
 The R2R engine is setup to use the hosted DeweyLearn `supabase` DB, `gtp-4o`, and `OpenAI small embeddings` model, see settings below and in the `.env` file.
 
+## Q&A
+The AI bot on the R2R website works very well.
+[R2R website](https://r2r-docs.sciphi.ai/api-reference/endpoint/ingest_documents)
+
 
 ## Using
 While the ingestion process does not require a userID, DWL needs it to be able to separate the content of the different entities. In R2R `user_id` must be a `UUID`. The currently easiest approach is to map/add a UUID per DWL data entry e.g. "c199d51d-f7f4-4f06-9e9d-f5b92af5989a" - "FA_35_2F_F6_C4_D1_ESCOFFIER_WEEK 1 STUDY HALL_PATRICK GUERRA & KYLE REYNOLDS". After succssful ingestion, the `user_id` could become a prefix to the current PATH in the data folder. 
