@@ -3,6 +3,7 @@ FROM python:3.10-slim AS builder
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ musl-dev curl libffi-dev gfortran libopenblas-dev \
+    libgl1-mesa-glx libglib2.0-0 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -15,7 +16,7 @@ COPY pyproject.toml poetry.lock* ./
 # Install the dependencies, including gunicorn and uvicorn
 RUN poetry config virtualenvs.create false \
     && poetry install --no-dev --no-root \
-    && pip install --no-cache-dir gunicorn uvicorn
+    && pip install --no-cache-dir gunicorn uvicorn opencv-python moviepy
 
 # Create the final image
 FROM python:3.10-slim
@@ -34,4 +35,4 @@ COPY config.json /app/config.json
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "r2r.main.app_entry:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "r2r.main.app_entry:app", "--host", "0.0.0.0", "--port", "9311", "--reload"]

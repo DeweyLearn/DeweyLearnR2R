@@ -1,7 +1,7 @@
 {
   "app": {
     "max_logs_per_request": 100,
-    "max_file_size_in_mb": 32
+    "max_file_size_in_mb": 4096
   },
   "completions": {
     "provider": "litellm",
@@ -11,7 +11,7 @@
       "top_p": 1.0,
       "top_k": 100,
       "max_tokens_to_sample": 1024,
-      "stream": false,
+      "stream": true,
       "functions": null,
       "skip_special_tokens": false,
       "stop_token": null,
@@ -54,6 +54,12 @@
     "provider": "local"
   },
   "vector_database": {
-    "provider": "pgvector"
-  }
+		"provider": "pgvector",
+		"user": "postgres.wwsgmwylkhzowrfagkuf",
+		"password": "live-learn-summer-happiness",
+		"host": "aws-0-us-east-1.pooler.supabase.com",
+		"db_name": "postgres",
+		"port": 6543,
+		"vecs_collection": "deweylearn_vecs_collection"
+	}
 }

@@ -38,7 +38,7 @@ class R2RApp:
     def _apply_cors(self):
         from fastapi.middleware.cors import CORSMiddleware
 
-        origins = ["*", "http://localhost:3000", "http://localhost:8000"]
+        origins = ["*", "http://localhost:3000", "http://localhost:9311"]
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
@@ -47,7 +47,7 @@ class R2RApp:
             allow_headers=["*"],
         )
 
-    def serve(self, host: str = "0.0.0.0", port: int = 8000):
+    def serve(self, host: str = "0.0.0.0", port: int = 9311):
         import uvicorn
 
         uvicorn.run(self.app, host=host, port=port)

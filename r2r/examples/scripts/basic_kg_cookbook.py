@@ -1,7 +1,7 @@
 from r2r import R2RClient
 
 if __name__ == "__main__":
-    client = R2RClient(base_url="http://localhost:8000")
+    client = R2RClient(base_url="http://9311")
 
     with open("john.txt", "w") as f:
         f.write("John is a person that works at Google.")

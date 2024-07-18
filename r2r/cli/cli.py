@@ -33,7 +33,7 @@ JSON = JsonParamType()
 @click.option("--client-mode", default=True, help="Run in client mode")
 @click.option(
     "--base-url",
-    default="http://localhost:8000",
+    default="http://localhost:9311",
     help="Base URL for client mode",
 )
 @click.pass_context
