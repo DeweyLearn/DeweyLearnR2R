@@ -3,9 +3,9 @@ requires = ["poetry-core", "setuptools", "wheel"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-name = "r2r"
+name = "DeweyLearnR2R"
 version = "0.2.60"
-description = "SciPhi R2R"
+description = "DeweyLearnR2R - R2R based RAG engine"
 authors = ["Owen Colegrove <owen@sciphi.ai>"]
 license = "MIT"
 readme = "README.md"

@@ -135,7 +135,7 @@ class R2RClient:
         file_paths: list[str],
         metadatas: Optional[list[dict]] = None,
         document_ids: Optional[list[Union[uuid.UUID, str]]] = None,
-        versions: Optional[list[str]] = None,
+        versions: Optional[list[str]] = None, 
     ) -> dict:
         all_file_paths = []
 
