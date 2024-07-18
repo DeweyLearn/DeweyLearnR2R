@@ -1,6 +1,39 @@
-# DeweyLearnR2R - new RAg engine
+# DeweyLearnR2R - new RAG engine
+`07/17/2024`
 R2R was designed to bridge the gap between local LLM experimentation and scalable, production-ready Retrieval-Augmented Generation (RAG). R2R provides a comprehensive and SOTA RAG system for developers, built around a RESTful API for ease of use.
 
+## Buidling and Running
+We are only using the R2R engine in docker and it API on port `9311`. To build and run the R2R engine, run the following commands:
+
+```
+export OPENAI_API_KEY=$OPENAI_API_KEY
+export POSTGRES_USER=$YOUR_POSTGRES_USER
+export POSTGRES_PASSWORD=$YOUR_POSTGRES_PASSWORD
+export POSTGRES_HOST=$YOUR_POSTGRES_HOST
+export POSTGRES_PORT=$YOUR_POSTGRES_PORT
+export POSTGRES_DBNAME=$YOUR_POSTGRES_DBNAME
+export POSTGRES_VECS_COLLECTION=$MY_VECS_COLLECTION
+
+docker-compose up -d
+
+docker build -t r2r .
+
+```
+Build the docker container
+```
+docker run -d \
+  --name DeweyLearnR2R \
+  --network deweylearn \
+  --restart always \
+  -p 9311:9311 \
+  -v /home/deweylearn/DEV/DeweyLearnK12/data:/app/data \
+  deweylearn-r2r
+```
+
+
+<br/><br/>
+
+# R2R Details from here on out
 For a more complete view of R2R, check out the [full documentation](https://r2r-docs.sciphi.ai/).
 
 ## Key Features
@@ -90,13 +123,6 @@ Star R2R on GitHub by clicking "Star" in the upper right hand corner of the page
 
 
 # R2R Quickstart
-
-## Demo Video
-<div align="center">
-  <a href="https://youtu.be/oZzfi_AUNqo">
-    <img src="https://img.youtube.com/vi/oZzfi_AUNqo/0.jpg" alt="Watch the video">
-  </a>
-</div>
 
 ## Start the R2R server
 <details open>
