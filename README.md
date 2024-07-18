@@ -4,6 +4,61 @@ R2R was designed to bridge the gap between local LLM experimentation and scalabl
 
 The R2R engine is setup to use the hosted DeweyLearn `supabase` DB, `gtp-4o`, and `OpenAI small embeddings` model, see settings below and in the `.env` file.
 
+
+## Using
+While the ingestion process does not require a userID, DWL needs it to be able to separate the content of the different entities. In R2R `user_id` must be a `UUID`. The currently easiest approach is to map/add a UUID per DWL data entry e.g. "c199d51d-f7f4-4f06-9e9d-f5b92af5989a" - "FA_35_2F_F6_C4_D1_ESCOFFIER_WEEK 1 STUDY HALL_PATRICK GUERRA & KYLE REYNOLDS". After succssful ingestion, the `user_id` could become a prefix to the current PATH in the data folder. 
+
+Example on how to ingest a file (note: a user_id is required, so UUID is to be created upfront):
+```
+curl -X 'POST' \
+  'http://localhost:9311/v1/ingest_files' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'files=@FA_35_2F_F6_C4_D1_ESCOFFIER_WEEK 1 STUDY HALL_PATRICK GUERRA & KYLE REYNOLDS.txt;type=text/plain' \
+  -F 'metadatas=[{"user_id":"c199d51d-f7f4-4f06-9e9d-f5b92af5989a"}]' \
+  -F 'document_ids=' \
+  -F 'versions='
+```
+
+Example on how a user specific search would be conducted:
+```
+curl -X 'POST' \
+  'http://localhost:9311/v1/search' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query": "what was discussed during the class, what chef'\''s were named",
+  "vector_search_settings": {"user_ids": ["c199d51d-f7f4-4f06-9e9d-f5b92af5989a"]},
+  "kg_search_settings": {}
+}'
+```
+Example of RAG with user specific search:
+```
+curl -X 'POST' \
+  'http://localhost:9311/v1/rag' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query": "what was discussed during the class, what chef'\''s were named",
+  "vector_search_settings": {
+    "user_ids": ["c199d51d-f7f4-4f06-9e9d-f5b92af5989a"]
+  },
+  "kg_search_settings": {},
+  "rag_generation_config": {
+    "model": "gpt-4o",
+    "stream": false,
+    "temperature": 0.2,
+    "max_tokens": 512,
+    "top_p": 0.98,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0,
+    "stop": ["\n"]
+  }
+}'
+```
+
+
+
 ## Buidling and Running
 We are only using the R2R engine in docker and it API on port `9311`. To build and run the R2R engine, run the following commands:
 
