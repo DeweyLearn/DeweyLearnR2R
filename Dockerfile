@@ -1,9 +1,9 @@
 FROM python:3.10-slim AS builder
 
-# Install system dependencies
+# Install system dependencies including curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ musl-dev curl libffi-dev gfortran libopenblas-dev \
-    libgl1-mesa-glx libglib2.0-0 \
+    libgl1-mesa-glx libglib2.0-0 curl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -21,6 +21,10 @@ RUN poetry config virtualenvs.create false \
 # Create the final image
 FROM python:3.10-slim
 
+# Install curl in the final image
+RUN apt-get update && apt-get install -y curl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy the installed packages from the builder
@@ -32,7 +36,7 @@ COPY r2r /app/r2r
 COPY config.json /app/config.json
 
 # Expose the port
-EXPOSE 8000
+EXPOSE 9311
 
 # Run the application
 CMD ["uvicorn", "r2r.main.app_entry:app", "--host", "0.0.0.0", "--port", "9311", "--reload"]
