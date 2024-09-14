@@ -1,8 +1,10 @@
-.env*
+**/.DS_Store
+.env
 .DS_Store
 *.gguf
 logs/
 workspace/
+py/workspace/
 uploads/
 env/
 **/__pycache__
@@ -16,4 +18,15 @@ coverage.xml
 **/*.sqlite*
 **/*.sqlite3*
 
-r2r/examples/data/*
+node_modules/
+dist/
+**/.data/*
+
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+go.work
+go.work.sum
