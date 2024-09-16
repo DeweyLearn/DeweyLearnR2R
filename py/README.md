@@ -30,6 +30,11 @@ docker build -t deweylearn-r2r .
 docker compose up -d  
 ```
 
+# Testing
+Use this notebook for testing the R2R engine. 
+
+[Jupyter Notebook](./engine_test.ipynb)
+
 ----------------------------
 
 ### Install
