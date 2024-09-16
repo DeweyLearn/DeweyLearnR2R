@@ -44,7 +44,7 @@ COPY r2r.toml /app/r2r.toml
 COPY pyproject.toml /app/pyproject.toml
 
 # Expose the port
-ARG PORT=8000
+ARG PORT=9311
 ARG HOST=0.0.0.0
 ENV PORT=$PORT HOST=$HOST
 EXPOSE $PORT

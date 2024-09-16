@@ -55,7 +55,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 RUN python -c "from unstructured.partition.model_init import initialize; initialize()"
 
 # Expose the port and set environment variables
-ARG PORT=8000
+ARG PORT=9311
 ARG HOST=0.0.0.0
 ENV PORT=$PORT \
     HOST=$HOST \

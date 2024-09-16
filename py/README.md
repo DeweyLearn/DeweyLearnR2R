@@ -20,7 +20,19 @@ For a more complete view of R2R, check out the [full documentation](https://r2r-
 4. [Community and Support](#community-and-support)
 5. [Contributing](#contributing)
 
+
 # Install
+R2R engine will run on port 9311. Data is inserted into `deweylearn_vecs_collection` in the `deweylearn` database. 
+
+```
+source .env
+docker build -t deweylearn-r2r . 
+docker compose up -d  
+```
+
+----------------------------
+
+### Install
 
 > [!NOTE]
 > Windows users are advised to use Docker to run R2R.

@@ -30,7 +30,7 @@ class R2RExecutionWrapper:
         config_path: Optional[str] = None,
         config_name: Optional[str] = "default",
         client_mode: bool = True,
-        base_url="http://localhost:8000",
+        base_url="http://localhost:9311",
     ):
         if config_path and config_name:
             raise Exception("Cannot specify both config_path and config_name")
@@ -56,7 +56,7 @@ class R2RExecutionWrapper:
             self.client = None
             self.app = R2R(config=config)
 
-    def serve(self, host: str = "0.0.0.0", port: int = 8000):
+    def serve(self, host: str = "0.0.0.0", port: int = 9311):
         if not self.client_mode:
             self.app.serve(host, port)
         else:

@@ -373,5 +373,5 @@ class R2RClient:
 
 
 if __name__ == "__main__":
-    client = R2RClient(base_url="http://localhost:8000")
+    client = R2RClient(base_url="http://localhost:9311")
     fire.Fire(client)

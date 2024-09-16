@@ -66,7 +66,7 @@ if not config_path and not config_name:
 client_mode = os.getenv("CLIENT_MODE", "false").lower() == "true"
 base_url = os.getenv("BASE_URL")
 host = os.getenv("HOST", "0.0.0.0")
-port = int(os.getenv("PORT", "8000"))
+port = int(os.getenv("PORT", "9311"))
 pipeline_type = os.getenv("PIPELINE_TYPE", "qna")
 
 logger.info(f"Environment CONFIG_NAME: {config_name}")

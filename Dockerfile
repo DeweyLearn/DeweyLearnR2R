@@ -31,7 +31,7 @@ COPY r2r /app/r2r
 COPY config.json /app/config.json
 
 # Expose the port
-EXPOSE 8000
+EXPOSE 9311
 
 # Run the application
-CMD ["uvicorn", "r2r.main.app_entry:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "r2r.main.app_entry:app", "--host", "0.0.0.0", "--port", "9311"]

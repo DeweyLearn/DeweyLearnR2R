@@ -33,7 +33,7 @@ JSON = JsonParamType()
 @click.option("--client-mode", default=True, help="Run in client mode")
 @click.option(
     "--base-url",
-    default="http://localhost:8000",
+    default="http://localhost:9311",
     help="Base URL for client mode",
 )
 @click.pass_context
@@ -65,7 +65,7 @@ def cli(ctx, config_path, config_name, client_mode, base_url):
 
 @cli.command()
 @click.option("--host", default="0.0.0.0", help="Host to run the server on")
-@click.option("--port", default=8000, help="Port to run the server on")
+@click.option("--port", default=9311, help="Port to run the server on")
 @click.option("--docker", is_flag=True, help="Run using Docker")
 @click.option(
     "--docker-ext-neo4j",
@@ -107,7 +107,7 @@ def serve(obj, host, port, docker, docker_ext_neo4j, project_name):
         docker_command = f"docker-compose -f {compose_yaml}"
         if docker_ext_neo4j:
             docker_command += f" -f {compose_neo4j_yaml}"
-        if host != "0.0.0.0" or port != 8000:
+        if host != "0.0.0.0" or port != 9311:
             docker_command += (
                 f" --build-arg HOST={host} --build-arg PORT={port}"
             )
