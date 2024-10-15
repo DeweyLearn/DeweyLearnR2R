@@ -3,16 +3,24 @@
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple
+from uuid import UUID
 
-from ...base.utils.base_utils import RelationshipType
-from ..abstractions.graph import Entity, KGExtraction, Triple
-from ..abstractions.llm import GenerationConfig
-from ..abstractions.restructure import KGCreationSettings, KGEnrichmentSettings
+from ..abstractions import (
+    CommunityReport,
+    Entity,
+    KGCreationSettings,
+    KGEnrichmentSettings,
+    KGExtraction,
+    KGSearchSettings,
+    RelationshipType,
+    Triple,
+)
 from .base import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
 
+# TODO - Bolt down types for KGConfig
 class KGConfig(ProviderConfig):
     """A base KG config class"""
 
@@ -23,22 +31,18 @@ class KGConfig(ProviderConfig):
     database: Optional[str] = None
 
     batch_size: Optional[int] = 1
-    kg_extraction_prompt: Optional[str] = "few_shot_ner_kg_extraction"
-    kg_search_prompt: Optional[str] = "kg_search"
-    kg_search_config: Optional[GenerationConfig] = None
     kg_store_path: Optional[str] = None
-    kg_enrichment_settings: Optional[KGEnrichmentSettings] = (
-        KGEnrichmentSettings()
-    )
-    kg_creation_settings: Optional[KGCreationSettings] = KGCreationSettings()
+    kg_enrichment_settings: KGEnrichmentSettings = KGEnrichmentSettings()
+    kg_creation_settings: KGCreationSettings = KGCreationSettings()
+    kg_search_settings: KGSearchSettings = KGSearchSettings()
 
-    def validate(self) -> None:
+    def validate_config(self) -> None:
         if self.provider not in self.supported_providers:
             raise ValueError(f"Provider '{self.provider}' is not supported.")
 
     @property
     def supported_providers(self) -> list[str]:
-        return [None, "neo4j", "local"]
+        return ["local", "postgres"]
 
 
 class KGProvider(ABC):
@@ -54,72 +58,84 @@ class KGProvider(ABC):
         self.validate_config()
 
     def validate_config(self) -> None:
-        self.config.validate()
+        self.config.validate_config()
 
-    @property
     @abstractmethod
-    def client(self) -> Any:
-        """Get client."""
+    async def add_entities(
+        self, entities: list[Entity], *args, **kwargs
+    ) -> None:
+        """Abstract method to add entities."""
         pass
 
     @abstractmethod
-    def get(self, subj: str) -> list[list[str]]:
-        """Abstract method to get triplets."""
+    async def add_triples(
+        self, triples: list[Triple], table_name: str
+    ) -> None:
+        """Abstract method to add triples."""
         pass
 
     @abstractmethod
-    def get_rel_map(
+    async def add_kg_extractions(
+        self, kg_extractions: list[KGExtraction], table_suffix: str = "_raw"
+    ) -> Tuple[int, int]:
+        """Abstract method to add KG extractions."""
+        pass
+
+    @abstractmethod
+    async def get_communities(
         self,
-        subjs: Optional[list[str]] = None,
-        depth: int = 2,
-        limit: int = 30,
-    ) -> dict[str, list[list[str]]]:
-        """Abstract method to get depth-aware rel map."""
+        collection_id: UUID,
+        offset: int,
+        limit: int,
+        levels: list[int] | None = None,
+        community_numbers: list[int] | None = None,
+    ) -> dict:
+        """Abstract method to get communities."""
         pass
 
     @abstractmethod
-    def upsert_entities(self, entities: list[Entity], *args, **kwargs) -> None:
-        """Abstract method to add triplet."""
+    async def get_existing_entity_extraction_ids(
+        self, document_id: UUID
+    ) -> list[str]:
+        """Abstract method to get existing entity extraction ids."""
         pass
 
     @abstractmethod
-    def upsert_triples(self, triples: list[Triple]) -> None:
-        """Abstract method to add triplet."""
-        pass
-
-    @abstractmethod
-    def get_entities(
+    async def get_entities(
         self,
+        collection_id: UUID,
+        offset: int,
+        limit: int,
         entity_ids: list[str] | None = None,
-        with_description: bool = False,
-    ) -> list[Entity]:
+        entity_table_name: str = "entity_embedding",
+    ) -> dict:
         """Abstract method to get entities."""
         pass
 
     @abstractmethod
-    def get_triples(self, triple_ids: list[str] | None = None) -> list[Triple]:
+    async def get_triples(
+        self,
+        collection_id: UUID,
+        offset: int,
+        limit: int,
+        entity_names: list[str] | None = None,
+        triple_ids: list[str] | None = None,
+    ) -> dict:
         """Abstract method to get triples."""
         pass
 
     @abstractmethod
-    def upsert_nodes_and_relationships(
-        self, kg_extractions: list[KGExtraction]
-    ) -> None:
-        """Abstract method to add triplet."""
+    async def delete_triples(self, triple_ids: list[int]) -> None:
+        """Abstract method to delete triples."""
         pass
 
     @abstractmethod
-    def delete(self, subj: str, rel: str, obj: str) -> None:
-        """Abstract method to delete triplet."""
-        pass
-
-    @abstractmethod
-    def get_schema(self, refresh: bool = False) -> str:
+    async def get_schema(self, refresh: bool = False) -> str:
         """Abstract method to get the schema of the graph store."""
         pass
 
     @abstractmethod
-    def structured_query(
+    async def structured_query(
         self, query: str, param_map: Optional[dict[str, Any]] = None
     ) -> Any:
         """Abstract method to query the graph store with statement and parameters."""
@@ -127,14 +143,14 @@ class KGProvider(ABC):
             param_map = {}
 
     @abstractmethod
-    def vector_query(
+    async def vector_query(
         self, query, **kwargs: Any
     ) -> Tuple[list[Entity], list[float]]:
         """Abstract method to query the graph store with a vector store query."""
 
     # TODO - Type this method.
     @abstractmethod
-    def update_extraction_prompt(
+    async def update_extraction_prompt(
         self,
         prompt_provider: Any,
         entity_types: list[Any],
@@ -145,7 +161,7 @@ class KGProvider(ABC):
 
     # TODO - Type this method.
     @abstractmethod
-    def update_kg_search_prompt(
+    async def update_kg_search_prompt(
         self,
         prompt_provider: Any,
         entity_types: list[Any],
@@ -155,10 +171,92 @@ class KGProvider(ABC):
         pass
 
     @abstractmethod
-    def create_vector_index(
+    async def create_vector_index(
         self, node_type: str, node_property: str, dimension: int
     ) -> None:
         """Abstract method to create a vector index."""
+        pass
+
+    @abstractmethod
+    async def perform_graph_clustering(
+        self,
+        collection_id: UUID,
+        leiden_params: dict,  # TODO - Add typing for leiden_params
+    ) -> int:
+        """Abstract method to perform graph clustering."""
+        pass
+
+    @abstractmethod
+    async def get_entity_map(
+        self, offset: int, limit: int, document_id: UUID
+    ) -> dict[str, Any]:
+        """Abstract method to get the entity map."""
+        pass
+
+    @abstractmethod
+    async def get_community_details(self, community_number: int):
+        """Abstract method to get community details."""
+        pass
+
+    @abstractmethod
+    async def get_entity_count(
+        self,
+        collection_id: Optional[UUID] = None,
+        document_id: Optional[UUID] = None,
+        distinct: bool = False,
+        entity_table_name: str = "entity_embedding",
+    ) -> int:
+        """Abstract method to get the entity count."""
+        pass
+
+    @abstractmethod
+    async def delete_graph_for_collection(
+        self, collection_id: UUID, cascade: bool
+    ) -> None:
+        """Abstract method to delete the graph for a collection."""
+        pass
+
+    @abstractmethod
+    async def delete_node_via_document_id(
+        self, document_id: UUID, collection_id: UUID
+    ) -> None:
+        """Abstract method to delete the node via document id."""
+        pass
+
+    @abstractmethod
+    async def get_creation_estimate(self, *args: Any, **kwargs: Any) -> Any:
+        """Abstract method to get the creation estimate."""
+        pass
+
+    @abstractmethod
+    async def get_enrichment_estimate(self, *args: Any, **kwargs: Any) -> Any:
+        """Abstract method to get the enrichment estimate."""
+        pass
+
+    @abstractmethod
+    async def add_community_report(
+        self, community_report: CommunityReport
+    ) -> None:
+        """Abstract method to add a community report."""
+        pass
+
+    @abstractmethod
+    async def get_community_reports(
+        self, collection_id: UUID
+    ) -> list[CommunityReport]:
+        """Abstract method to get community reports."""
+        pass
+
+    @abstractmethod
+    async def check_community_reports_exist(
+        self, collection_id: UUID, offset: int, limit: int
+    ) -> list[int]:
+        """Abstract method to check if community reports exist."""
+        pass
+
+    @abstractmethod
+    async def get_community_count(self, collection_id: UUID) -> int:
+        """Abstract method to get the community count."""
         pass
 
 

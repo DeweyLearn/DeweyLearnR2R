@@ -3,12 +3,14 @@
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Generic, TypeVar
 
-from ..abstractions.document import DataType
+from ..abstractions import DataType
 
 T = TypeVar("T")
 
 
 class AsyncParser(ABC, Generic[T]):
     @abstractmethod
-    async def ingest(self, data: T) -> AsyncGenerator[DataType, None]:
+    async def ingest(
+        self, data: T, **kwargs
+    ) -> AsyncGenerator[DataType, None]:
         pass

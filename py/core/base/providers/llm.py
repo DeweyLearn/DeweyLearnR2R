@@ -4,8 +4,9 @@ import time
 from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncGenerator, Generator, Optional
+from litellm import AuthenticationError
 
-from core.base.abstractions.llm import (
+from core.base.abstractions import (
     GenerationConfig,
     LLMChatCompletion,
     LLMChatCompletionChunk,
@@ -18,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 class CompletionConfig(ProviderConfig):
     provider: Optional[str] = None
-    generation_config: Optional[GenerationConfig] = None
+    generation_config: GenerationConfig = GenerationConfig()
     concurrent_request_limit: int = 256
-    max_retries: int = 2
+    max_retries: int = 8
     initial_backoff: float = 1.0
-    max_backoff: float = 60.0
+    max_backoff: float = 64.0
 
-    def validate(self) -> None:
+    def validate_config(self) -> None:
         if not self.provider:
             raise ValueError("Provider must be set.")
         if self.provider not in self.supported_providers:
@@ -56,6 +57,8 @@ class CompletionProvider(Provider):
             try:
                 async with self.semaphore:
                     return await self._execute_task(task)
+            except AuthenticationError as e:
+                raise
             except Exception as e:
                 logger.warning(
                     f"Request failed (attempt {retries + 1}): {str(e)}"
@@ -77,6 +80,8 @@ class CompletionProvider(Provider):
                     async for chunk in await self._execute_task(task):
                         yield chunk
                 return  # Successful completion of the stream
+            except AuthenticationError as e:
+                raise
             except Exception as e:
                 logger.warning(
                     f"Streaming request failed (attempt {retries + 1}): {str(e)}"

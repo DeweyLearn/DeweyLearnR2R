@@ -5,7 +5,8 @@ import subprocess
 import sys
 from importlib.metadata import version as get_version
 
-import click
+import asyncclick as click
+from asyncclick import pass_context
 from dotenv import load_dotenv
 
 from cli.command_group import cli
@@ -20,9 +21,10 @@ from cli.utils.timer import timer
 
 
 @cli.command()
-@click.pass_obj
-def health(client):
+@pass_context
+def health(ctx):
     """Check the health of the server."""
+    client = ctx.obj
     with timer():
         response = client.health()
 
@@ -30,8 +32,9 @@ def health(client):
 
 
 @cli.command()
-@click.pass_obj
-def server_stats(client):
+@pass_context
+def server_stats(ctx):
+    client = ctx.obj
     """Check the server stats."""
     with timer():
         response = client.server_stats()
@@ -47,9 +50,10 @@ def server_stats(client):
     "--limit", default=None, help="Pagination limit. Defaults to 100."
 )
 @click.option("--run-type-filter", help="Filter for log types")
-@click.pass_obj
-def logs(client, run_type_filter, offset, limit):
+@pass_context
+def logs(ctx, run_type_filter, offset, limit):
     """Retrieve logs with optional type filter."""
+    client = ctx.obj
     with timer():
         response = client.logs(
             offset=offset, limit=limit, run_type_filter=run_type_filter
@@ -79,18 +83,44 @@ def logs(client, run_type_filter, offset, limit):
     is_flag=True,
     help="Remove containers for services not defined in the Compose file",
 )
-@click.option("--project-name", default="r2r", help="Project name for Docker")
+@click.option(
+    "--project-name",
+    default=None,
+    help="Which Docker Compose project to bring down",
+)
 def docker_down(volumes, remove_orphans, project_name):
     """Bring down the Docker Compose setup and attempt to remove the network if necessary."""
-    result = bring_down_docker_compose(project_name, volumes, remove_orphans)
+
     remove_r2r_network()
 
-    if result != 0:
-        click.echo(
-            "An error occurred while bringing down the Docker Compose setup. Attempting to remove the network..."
-        )
+    if not project_name:
+        print("Bringing down the default R2R Docker setup(s)...")
+        try:
+            result = bring_down_docker_compose(
+                project_name or "r2r", volumes, remove_orphans
+            )
+        except:
+            pass
+        try:
+            result = bring_down_docker_compose(
+                project_name or "r2r-full", volumes, remove_orphans
+            )
+        except:
+            pass
     else:
-        click.echo("Docker Compose setup has been successfully brought down.")
+        print(f"Bringing down the `{project_name}` R2R Docker setup...")
+        result = bring_down_docker_compose(
+            project_name, volumes, remove_orphans
+        )
+
+        if result != 0:
+            click.echo(
+                f"An error occurred while bringing down the {project_name} Docker Compose setup. Attempting to remove the network..."
+            )
+        else:
+            click.echo(
+                f"{project_name} Docker Compose setup has been successfully brought down."
+            )
 
 
 @cli.command()
@@ -173,27 +203,17 @@ def generate_report():
 
 
 @cli.command()
-@click.option("--host", default="0.0.0.0", help="Host to run the server on")
-@click.option("--port", default=7272, help="Port to run the server on")
+@click.option("--host", default=None, help="Host to run the server on")
+@click.option("--port", default=None, help="Port to run the server on")
 @click.option("--docker", is_flag=True, help="Run using Docker")
 @click.option(
-    "--exclude-neo4j", default=False, help="Exclude Neo4j from Docker setup"
+    "--full",
+    is_flag=True,
+    help="Run the full R2R compose? This includes Hatchet and Unstructured.",
 )
 @click.option(
-    "--exclude-ollama", default=True, help="Exclude Ollama from Docker setup"
+    "--project-name", default=None, help="Project name for Docker deployment"
 )
-@click.option(
-    "--exclude-postgres",
-    default=False,
-    help="Exclude Postgres from Docker setup",
-)
-@click.option(
-    "--exclude-hatchet",
-    default=False,
-    help="Exclude Hatchet from Docker setup",
-)
-@click.option("--project-name", default="r2r", help="Project name for Docker")
-@click.option("--image", help="Docker image to use")
 @click.option(
     "--config-name", default=None, help="Name of the R2R configuration to use"
 )
@@ -208,51 +228,74 @@ def generate_report():
     default=False,
     help="Run in debug mode. Only for development.",
 )
-@click.option(
-    "--dev",
-    is_flag=True,
-    default=False,
-    help="Run in development mode",
-)
+@click.option("--image", help="Docker image to use")
 @click.option(
     "--image-env",
     default="prod",
     help="Which dev environment to pull the image from?",
 )
-def serve(
+@click.option(
+    "--exclude-postgres",
+    is_flag=True,
+    default=False,
+    help="Excludes creating a Postgres container in the Docker setup.",
+)
+async def serve(
     host,
     port,
     docker,
-    exclude_neo4j,
-    exclude_ollama,
-    exclude_postgres,
-    exclude_hatchet,
+    full,
     project_name,
-    image,
     config_name,
     config_path,
     build,
-    dev,
-    image_env
+    image,
+    image_env,
+    exclude_postgres,
 ):
     """Start the R2R server."""
     load_dotenv()
+    click.echo("Spinning up an R2R deployment...")
+
+    if host is None:
+        host = os.getenv("R2R_HOST", "0.0.0.0")
+
+    if port is None:
+        port = int(os.getenv("R2R_PORT", (os.getenv("PORT", "7272"))))
+
+    click.echo(f"Running on {host}:{port}, with docker={docker}")
+
+    if full:
+        click.echo(
+            "Running the full R2R setup which includes `Hatchet` and `Unstructured.io`."
+        )
+
+    if config_path and config_name:
+        raise click.UsageError(
+            "Both `config-path` and `config-name` were provided. Please provide only one."
+        )
+    if config_name and os.path.isfile(config_name):
+        click.echo(
+            "Warning: `config-name` corresponds to an existing file. If you intended a custom config, use `config-path`."
+        )
+
+    if build:
+        click.echo(
+            "`build` flag detected. Building Docker image from local repository..."
+        )
     if image and image_env:
         click.echo(
             "WARNING: Both `image` and `image_env` were provided. Using `image`."
         )
-
-    if not image:
+    if not image and docker:
         r2r_version = get_version("r2r")
 
-        version_specific_image = (
-            f"ragtoriches/{image_env}:{r2r_version}"
-        )
+        version_specific_image = f"ragtoriches/{image_env}:{r2r_version}"
         latest_image = f"ragtoriches/{image_env}:latest"
 
         def image_exists(img):
             try:
-                result = subprocess.run(
+                subprocess.run(
                     ["docker", "manifest", "inspect", img],
                     check=True,
                     capture_output=True,
@@ -266,26 +309,25 @@ def serve(
             click.echo(f"Using image: {version_specific_image}")
             image = version_specific_image
         elif image_exists(latest_image):
-            click.echo(f"Version-specific image not found. Using latest: {latest_image}")
+            click.echo(
+                f"Version-specific image not found. Using latest: {latest_image}"
+            )
             image = latest_image
         else:
-            click.echo(f"Neither {version_specific_image} nor {latest_image} found locally.")
-            click.echo("Please pull the required image or build it using the --build flag.")
+            click.echo(
+                f"Neither {version_specific_image} nor {latest_image} found in remote registry. Confirm the sanity of your output for `docker manifest inspect ragtoriches/{version_specific_image}` and  `docker manifest inspect ragtoriches/{latest_image}`."
+            )
+            click.echo(
+                "Please pull the required image or build it using the --build flag."
+            )
             raise click.Abort()
 
-    os.environ["R2R_IMAGE"] = image
+    if docker:
+        os.environ["R2R_IMAGE"] = image
 
     if build:
         subprocess.run(
-            [
-                "docker",
-                "build",
-                "-t",
-                image,
-                "-f",
-                f"Dockerfile{'.dev' if dev else ''}",
-                ".",
-            ],
+            ["docker", "build", "-t", image, "-f", "Dockerfile", "."],
             check=True,
         )
 
@@ -294,24 +336,21 @@ def serve(
 
         # For Windows, convert backslashes to forward slashes and prepend /host_mnt/
         if platform.system() == "Windows":
-            config_path = "/host_mnt/" + config_path.replace(
+            drive, path = os.path.splitdrive(config_path)
+            config_path = f"/host_mnt/{drive[0].lower()}" + path.replace(
                 "\\", "/"
-            ).replace(":", "")
+            )
 
     if docker:
-
         run_docker_serve(
             host,
             port,
-            exclude_neo4j,
-            exclude_ollama,
-            exclude_postgres,
-            exclude_hatchet,
+            full,
             project_name,
             image,
             config_name,
             config_path,
-            
+            exclude_postgres,
         )
         if (
             "pytest" in sys.modules
@@ -324,11 +363,13 @@ def serve(
             import webbrowser
 
             click.echo("Waiting for all services to become healthy...")
-
-            if not wait_for_container_health(project_name, "r2r"):
+            if not wait_for_container_health(
+                project_name or ("r2r-full" if full else "r2r"), "r2r"
+            ):
                 click.secho(
                     "r2r container failed to become healthy.", fg="red"
                 )
+                return
 
             traefik_port = os.environ.get("R2R_DASHBOARD_PORT", "80")
             url = f"http://localhost:{traefik_port}"
@@ -336,7 +377,7 @@ def serve(
             click.secho(f"Navigating to R2R application at {url}.", fg="blue")
             webbrowser.open(url)
     else:
-        run_local_serve(host, port, config_name, config_path)
+        await run_local_serve(host, port, config_name, config_path, full)
 
 
 @cli.command()

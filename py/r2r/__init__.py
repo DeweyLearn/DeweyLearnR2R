@@ -1,8 +1,12 @@
+import logging
 from pathlib import Path
 
 import toml
 
 from sdk import *
+from shared import *
+
+logger = logging.getLogger(__name__)
 
 pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
 pyproject_data = toml.load(pyproject_path)
@@ -15,6 +19,16 @@ __all__ = [
     "R2RClient",
     "__version__",
 ]
+
+try:
+    import core
+    from core import *
+
+    __all__ += core.__all__
+except ImportError as e:
+    logger.error(
+        f"ImportError: `{e}`, likely due to core dependencies not being installed."
+    )
 
 
 # Add a function to get the version

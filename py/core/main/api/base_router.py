@@ -1,27 +1,26 @@
 import functools
 import logging
 from abc import abstractmethod
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from core.base import R2RException, manage_run
 from core.base.logging.base import RunType
-
-logger = logging.getLogger(__name__)
-
 from core.base.providers import OrchestrationProvider
 
 from ..services.base import Service
+
+logger = logging.getLogger(__name__)
 
 
 class BaseRouter:
     def __init__(
         self,
         service: "Service",
+        orchestration_provider: OrchestrationProvider,
         run_type: RunType = RunType.UNSPECIFIED,
-        orchestration_provider: Optional[OrchestrationProvider] = None,
     ):
         self.service = service
         self.run_type = run_type
@@ -34,7 +33,7 @@ class BaseRouter:
     def get_router(self):
         return self.router
 
-    def base_endpoint(self, func: callable):
+    def base_endpoint(self, func: Callable):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             async with manage_run(
@@ -48,10 +47,19 @@ class BaseRouter:
                     )
 
                 try:
-                    results = await func(*args, **kwargs)
+                    func_result = await func(*args, **kwargs)
+                    if (
+                        isinstance(func_result, tuple)
+                        and len(func_result) == 2
+                    ):
+                        results, outer_kwargs = func_result
+                    else:
+                        results, outer_kwargs = func_result, {}
+
                     if isinstance(results, StreamingResponse):
                         return results
-                    return {"results": results}
+                    return {"results": results, **outer_kwargs}
+
                 except R2RException as re:
                     raise HTTPException(
                         status_code=re.status_code,
@@ -60,18 +68,20 @@ class BaseRouter:
                             "error_type": type(re).__name__,
                         },
                     )
+
                 except Exception as e:
-                    print("cc")
 
                     await self.service.logging_connection.log(
                         run_id=run_id,
                         key="error",
                         value=str(e),
                     )
+
                     logger.error(
                         f"Error in base endpoint {func.__name__}() - \n\n{str(e)}",
                         exc_info=True,
                     )
+
                     raise HTTPException(
                         status_code=500,
                         detail={
@@ -91,10 +101,8 @@ class BaseRouter:
     def _setup_routes(self):
         pass
 
-    @abstractmethod
     def _register_workflows(self):
         pass
 
-    @abstractmethod
     def _load_openapi_extras(self):
-        pass
+        return {}

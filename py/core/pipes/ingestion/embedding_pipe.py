@@ -4,7 +4,7 @@ from typing import Any, AsyncGenerator, Optional, Union
 
 from core.base import (
     AsyncState,
-    DocumentFragment,
+    DocumentExtraction,
     EmbeddingProvider,
     PipeType,
     R2RDocumentProcessingError,
@@ -17,68 +17,72 @@ from core.base.pipes.base_pipe import AsyncPipe
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingPipe(AsyncPipe):
+class EmbeddingPipe(AsyncPipe[VectorEntry]):
     """
-    Embeds fragments using a specified embedding model.
+    Embeds extractions using a specified embedding model.
     """
 
     class Input(AsyncPipe.Input):
-        message: list[DocumentFragment]
+        message: list[DocumentExtraction]
 
     def __init__(
         self,
         embedding_provider: EmbeddingProvider,
+        config: AsyncPipe.PipeConfig,
         embedding_batch_size: int = 1,
         pipe_logger: Optional[RunLoggingSingleton] = None,
         type: PipeType = PipeType.INGESTOR,
-        config: Optional[AsyncPipe.PipeConfig] = None,
         *args,
         **kwargs,
     ):
         super().__init__(
-            pipe_logger=pipe_logger,
-            type=type,
-            config=config
-            or AsyncPipe.PipeConfig(name="default_embedding_pipe"),
+            config,
+            type,
+            pipe_logger,
         )
         self.embedding_provider = embedding_provider
         self.embedding_batch_size = embedding_batch_size
 
-    async def embed(self, fragments: list[DocumentFragment]) -> list[float]:
+    async def embed(
+        self, extractions: list[DocumentExtraction]
+    ) -> list[float]:
         return await self.embedding_provider.async_get_embeddings(
-            [fragment.data for fragment in fragments],
+            [extraction.data for extraction in extractions],  # type: ignore
             EmbeddingProvider.PipeStage.BASE,
         )
 
     async def _process_batch(
-        self, fragment_batch: list[DocumentFragment]
+        self, extraction_batch: list[DocumentExtraction]
     ) -> list[VectorEntry]:
-        vectors = await self.embed(fragment_batch)
+        vectors = await self.embed(extraction_batch)
         return [
             VectorEntry(
-                fragment_id=fragment.id,
-                extraction_id=fragment.extraction_id,
-                document_id=fragment.document_id,
-                user_id=fragment.user_id,
-                group_ids=fragment.group_ids,
+                extraction_id=extraction.id,
+                document_id=extraction.document_id,
+                user_id=extraction.user_id,
+                collection_ids=extraction.collection_ids,
                 vector=Vector(data=raw_vector),
-                text=fragment.data,
+                text=extraction.data,  # type: ignore
                 metadata={
-                    **fragment.metadata,
+                    **extraction.metadata,
                 },
             )
-            for raw_vector, fragment in zip(vectors, fragment_batch)
+            for raw_vector, extraction in zip(vectors, extraction_batch)
         ]
 
-    async def _run_logic(
+    async def _run_logic(  # type: ignore
         self,
-        input: Input,
-        state: Optional[AsyncState],
+        input: AsyncPipe.Input,
+        state: AsyncState,
         run_id: Any,
         *args: Any,
         **kwargs: Any,
     ) -> AsyncGenerator[VectorEntry, None]:
-        fragment_batch = []
+        if not isinstance(input, EmbeddingPipe.Input):
+            raise ValueError(
+                f"Invalid input type for embedding pipe: {type(input)}"
+            )
+        extraction_batch = []
         batch_size = self.embedding_batch_size
         concurrent_limit = (
             self.embedding_provider.config.concurrent_request_limit
@@ -90,13 +94,13 @@ class EmbeddingPipe(AsyncPipe):
 
         try:
             for item in input.message:
-                fragment_batch.append(item)
+                extraction_batch.append(item)
 
-                if len(fragment_batch) >= batch_size:
+                if len(extraction_batch) >= batch_size:
                     tasks.add(
-                        asyncio.create_task(process_batch(fragment_batch))
+                        asyncio.create_task(process_batch(extraction_batch))
                     )
-                    fragment_batch = []
+                    extraction_batch = []
 
                 while len(tasks) >= concurrent_limit:
                     done, tasks = await asyncio.wait(
@@ -106,11 +110,11 @@ class EmbeddingPipe(AsyncPipe):
                         for vector_entry in await task:
                             yield vector_entry
 
-            if fragment_batch:
-                tasks.add(asyncio.create_task(process_batch(fragment_batch)))
+            if extraction_batch:
+                tasks.add(asyncio.create_task(process_batch(extraction_batch)))
 
-            for task in asyncio.as_completed(tasks):
-                for vector_entry in await task:
+            for future_task in asyncio.as_completed(tasks):
+                for vector_entry in await future_task:
                     yield vector_entry
         finally:
             # Ensure all tasks are completed
@@ -128,28 +132,32 @@ class EmbeddingPipe(AsyncPipe):
                 await self.log_queue.get()
                 self.log_queue.task_done()
 
-    async def _process_fragment(
-        self, fragment: DocumentFragment
+    async def _process_extraction(
+        self, extraction: DocumentExtraction
     ) -> Union[VectorEntry, R2RDocumentProcessingError]:
         try:
+            if isinstance(extraction.data, bytes):
+                raise ValueError(
+                    "extraction data is in bytes format, which is not supported by the embedding provider."
+                )
+
             vectors = await self.embedding_provider.async_get_embeddings(
-                [fragment.data],
+                [extraction.data],
                 EmbeddingProvider.PipeStage.BASE,
             )
 
             return VectorEntry(
-                fragment_id=fragment.id,
-                extraction_id=fragment.extraction_id,
-                document_id=fragment.document_id,
-                user_id=fragment.user_id,
-                group_ids=fragment.group_ids,
+                extraction_id=extraction.id,
+                document_id=extraction.document_id,
+                user_id=extraction.user_id,
+                collection_ids=extraction.collection_ids,
                 vector=Vector(data=vectors[0]),
-                text=fragment.data,
-                metadata={**fragment.metadata},
+                text=extraction.data,
+                metadata={**extraction.metadata},
             )
         except Exception as e:
-            logger.error(f"Error processing fragment: {e}")
+            logger.error(f"Error processing extraction: {e}")
             return R2RDocumentProcessingError(
                 error_message=str(e),
-                document_id=fragment.document_id,
+                document_id=extraction.document_id,
             )

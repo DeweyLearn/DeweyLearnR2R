@@ -52,10 +52,6 @@
     {
       "name": "Cookbooks",
       "url": "cookbooks"
-    },
-    {
-      "name": "SciPhi Cloud",
-      "url": "sciphi-cloud"
     }
   ],
   "anchors": [
@@ -82,8 +78,23 @@
           "icon": "bars-progress",
           "pages" : [
             "documentation/installation/overview",
-            "documentation/installation/docker",
-            "documentation/installation/local-system"
+            {
+              "group": "Light",
+              "icon": "feather",
+              "pages": [
+                "documentation/installation/light/local-system",
+                "documentation/installation/light/docker"
+              ]
+            },
+            {
+              "group": "Full",
+              "icon": "gem",
+              "pages": [
+                "documentation/installation/full/docker",
+                "documentation/installation/full/local-system"
+              ]
+            }
+
           ]
         },
         "documentation/quickstart",
@@ -97,9 +108,10 @@
               "pages": [
                 "documentation/python-sdk/introduction",
                 "documentation/python-sdk/ingestion",
+                "documentation/python-sdk/graphrag",
                 "documentation/python-sdk/retrieval",
                 "documentation/python-sdk/auth",
-                "documentation/python-sdk/groups",
+                "documentation/python-sdk/collections",
                 "documentation/python-sdk/observability"
               ]
             },
@@ -111,12 +123,26 @@
                 "documentation/js-sdk/ingestion",
                 "documentation/js-sdk/retrieval",
                 "documentation/js-sdk/auth",
+                "documentation/js-sdk/collections",
                 "documentation/js-sdk/observability"
               ]
             },
+            {
+              "icon": "desktop",
+              "group": "CLI",
+              "pages": [
+                "documentation/cli/introduction",
+                "documentation/cli/server",
+                "documentation/cli/ingestion",
+                "documentation/cli/graph",
+                "documentation/cli/management"
+              ]
+            },
+
             "documentation/api-reference"
           ]
-        }
+        },
+        "documentation/glossary"
       ]
     },
     {
@@ -173,7 +199,8 @@
           "pages": [
             "documentation/deployment/azure",
             "documentation/deployment/aws",
-            "documentation/deployment/gcp"
+            "documentation/deployment/gcp",
+            "documentation/deployment/sciphi"
           ]
         },
         {
@@ -226,8 +253,6 @@
               "pages": [
                 "documentation/deployment/troubleshooting/vector_store_issues",
                 "documentation/deployment/troubleshooting/connection_strings",
-                "documentation/deployment/troubleshooting/graph_db",
-                "documentation/deployment/troubleshooting/neo4j",
                 "documentation/deployment/troubleshooting/workflows"
               ]
             },
@@ -281,14 +306,19 @@
       "group": "Document Ingestion",
       "pages": [
         "api-reference/endpoint/ingest_files",
-        "api-reference/endpoint/update_files"
+        "api-reference/endpoint/ingest_chunks",
+        "api-reference/endpoint/update_files",
+        "api-reference/endpoint/create_vector_index"
       ]
     },
     {
       "group": "Knowledge Graph",
       "pages": [
         "api-reference/endpoint/create_graph",
-        "api-reference/endpoint/enrich_graph"
+        "api-reference/endpoint/enrich_graph",
+        "api-reference/endpoint/entities",
+        "api-reference/endpoint/triples",
+        "api-reference/endpoint/communities"
       ]
     },
     {
@@ -296,7 +326,8 @@
       "pages": [
         "api-reference/endpoint/search",
         "api-reference/endpoint/rag",
-        "api-reference/endpoint/agent"
+        "api-reference/endpoint/agent",
+        "api-reference/endpoint/completion"
       ]
     },
     {
@@ -323,21 +354,21 @@
       ]
     },
     {
-      "group": "Groups",
+      "group": "Collections",
       "pages": [
-        "api-reference/endpoint/create_group",
-        "api-reference/endpoint/get_group",
-        "api-reference/endpoint/update_group",
-        "api-reference/endpoint/delete_group",
-        "api-reference/endpoint/list_groups",
-        "api-reference/endpoint/add_user_to_group",
-        "api-reference/endpoint/remove_user_from_group",
-        "api-reference/endpoint/get_users_in_group",
-        "api-reference/endpoint/get_groups_for_user",
-        "api-reference/endpoint/groups_overview",
-        "api-reference/endpoint/assign_document_to_group",
-        "api-reference/endpoint/remove_document_from_group",
-        "api-reference/endpoint/get_document_groups"
+        "api-reference/endpoint/create_collection",
+        "api-reference/endpoint/get_collection",
+        "api-reference/endpoint/update_collection",
+        "api-reference/endpoint/delete_collection",
+        "api-reference/endpoint/list_collections",
+        "api-reference/endpoint/add_user_to_collection",
+        "api-reference/endpoint/remove_user_from_collection",
+        "api-reference/endpoint/get_users_in_collection",
+        "api-reference/endpoint/get_collections_for_user",
+        "api-reference/endpoint/collections_overview",
+        "api-reference/endpoint/assign_document_to_collection",
+        "api-reference/endpoint/remove_document_from_collection",
+        "api-reference/endpoint/get_document_collections"
       ]
     },
 
@@ -357,24 +388,13 @@
     {
       "group": "Analytics and Observability",
       "pages": [
-        "api-reference/endpoint/analytics",
-        "api-reference/endpoint/score_completion"
+        "api-reference/endpoint/analytics"
       ]
     },
     {
       "group": "Status",
       "pages": [
         "api-reference/endpoint/health"
-      ]
-    },
-    {
-      "group": "SciPhi Cloud",
-      "pages": [
-        "sciphi-cloud/introduction",
-        "sciphi-cloud/deploy",
-        "sciphi-cloud/projects",
-        "sciphi-cloud/quickstart",
-        "sciphi-cloud/security"
       ]
     },
     {
@@ -393,7 +413,7 @@
       "group": "Auth & Admin",
       "pages": [
         "cookbooks/user-auth",
-        "cookbooks/groups",
+        "cookbooks/collections",
         "cookbooks/observability",
         "cookbooks/application"
       ]

@@ -24,7 +24,7 @@ class AsyncPipeline:
         self.upstream_outputs: list[list[dict[str, str]]] = []
         self.pipe_logger = pipe_logger or RunLoggingSingleton()
         self.run_manager = run_manager or RunManager(self.pipe_logger)
-        self.futures = {}
+        self.futures: dict[str, asyncio.Future] = {}
         self.level = 0
 
     def add_pipe(
@@ -51,7 +51,6 @@ class AsyncPipeline:
     ):
         """Run the pipeline."""
         run_manager = run_manager or self.run_manager
-
         self.state = state or AsyncState()
         current_input = input
         async with manage_run(run_manager):
@@ -68,17 +67,20 @@ class AsyncPipeline:
                         **kwargs,
                     )
                     self.futures[config_name].set_result(current_input)
-                return (
-                    current_input
-                    if stream
-                    else await self._consume_all(current_input)
-                )
+
             except Exception as error:
+                # TODO: improve error handling here
                 error_trace = traceback.format_exc()
                 logger.error(
                     f"Pipeline failed with error: {error}\n\nStack trace:\n{error_trace}"
                 )
                 raise error
+
+            return (
+                current_input
+                if stream
+                else await self._consume_all(current_input)
+            )
 
     async def _consume_all(self, gen: AsyncGenerator) -> list[Any]:
         result = []
@@ -107,8 +109,8 @@ class AsyncPipeline:
         )
         input_dict = {"message": input}
 
-        # Group upstream outputs by prev_pipe_name
-        grouped_upstream_outputs = {}
+        # Collection upstream outputs by prev_pipe_name
+        grouped_upstream_outputs: dict[str, list] = {}
         for upstream_input in add_upstream_outputs:
             upstream_pipe_name = upstream_input["prev_pipe_name"]
             if upstream_pipe_name not in grouped_upstream_outputs:
@@ -147,7 +149,6 @@ class AsyncPipeline:
                 input_dict[upstream_input["input_field"]] = outputs[
                     prev_output_field
                 ]
-
         async for ele in await pipe.run(
             pipe.Input(**input_dict),
             self.state,

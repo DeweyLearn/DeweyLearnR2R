@@ -1,5 +1,7 @@
+import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Union
+from uuid import UUID
 
 import yaml
 from fastapi import Body, Depends
@@ -14,6 +16,7 @@ from core.base import (
     VectorSearchSettings,
 )
 from core.base.api.models import (
+    WrappedCompletionResponse,
     WrappedRAGAgentResponse,
     WrappedRAGResponse,
     WrappedSearchResponse,
@@ -28,10 +31,10 @@ class RetrievalRouter(BaseRouter):
     def __init__(
         self,
         service: RetrievalService,
+        orchestration_provider: OrchestrationProvider,
         run_type: RunType = RunType.RETRIEVAL,
-        orchestration_provider: Optional[OrchestrationProvider] = None,
     ):
-        super().__init__(service, run_type, orchestration_provider)
+        super().__init__(service, orchestration_provider, run_type)
         self.service: RetrievalService = service  # for type hinting
 
     def _load_openapi_extras(self):
@@ -41,6 +44,52 @@ class RetrievalRouter(BaseRouter):
         with open(yaml_path, "r") as yaml_file:
             yaml_content = yaml.safe_load(yaml_file)
         return yaml_content
+
+    def _register_workflows(self):
+        pass
+
+    def _select_filters(
+        self,
+        auth_user: Any,
+        search_settings: Union[VectorSearchSettings, KGSearchSettings],
+    ) -> dict[str, Any]:
+        selected_collections = {
+            str(cid) for cid in set(search_settings.selected_collection_ids)
+        }
+
+        if auth_user.is_superuser:
+            if selected_collections:
+                # For superusers, we only filter by selected collections
+                filters = {
+                    "collection_ids": {"$overlap": list(selected_collections)}
+                }
+            else:
+                filters = {}
+        else:
+            user_collections = set(auth_user.collection_ids)
+
+            if selected_collections:
+                allowed_collections = user_collections.intersection(
+                    selected_collections
+                )
+            else:
+                allowed_collections = user_collections
+            # for non-superusers, we filter by user_id and selected & allowed collections
+            filters = {
+                "$or": [
+                    {"user_id": {"$eq": auth_user.id}},
+                    {
+                        "collection_ids": {
+                            "$overlap": list(allowed_collections)
+                        }
+                    },
+                ]  # type: ignore
+            }
+
+        if search_settings.filters != {}:
+            filters = {"$and": [filters, search_settings.filters]}  # type: ignore
+
+        return filters
 
     def _setup_routes(self):
         search_extras = self.openapi_extras.get("search", {})
@@ -64,7 +113,7 @@ class RetrievalRouter(BaseRouter):
                 description=search_descriptions.get("kg_search_settings"),
             ),
             auth_user=Depends(self.service.providers.auth.auth_wrapper),
-        ) -> WrappedSearchResponse:
+        ) -> WrappedSearchResponse:  # type: ignore
             """
             Perform a search query on the vector database and knowledge graph.
 
@@ -73,27 +122,16 @@ class RetrievalRouter(BaseRouter):
 
 
             Allowed operators include `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, and `nin`.
-
             """
-            user_groups = set(auth_user.group_ids)
-            selected_groups = set(vector_search_settings.selected_group_ids)
-            allowed_groups = user_groups.intersection(selected_groups)
-            if selected_groups - allowed_groups != set():
-                raise ValueError(
-                    "User does not have access to the specified group(s): "
-                    f"{selected_groups - allowed_groups}"
-                )
 
-            filters = {
-                "$or": [
-                    {"user_id": {"$eq": str(auth_user.id)}},
-                    {"group_ids": {"$overlap": list(allowed_groups)}},
-                ]
-            }
-            if vector_search_settings.filters != {}:
-                filters = {"$and": [filters, vector_search_settings.filters]}
+            vector_search_settings.filters = self._select_filters(
+                auth_user, vector_search_settings
+            )
 
-            vector_search_settings.filters = filters
+            kg_search_settings.filters = self._select_filters(
+                auth_user, kg_search_settings
+            )
+
             results = await self.service.search(
                 query=query,
                 vector_search_settings=vector_search_settings,
@@ -127,11 +165,11 @@ class RetrievalRouter(BaseRouter):
                 None, description=rag_descriptions.get("task_prompt_override")
             ),
             include_title_if_available: bool = Body(
-                True,
+                False,
                 description=rag_descriptions.get("include_title_if_available"),
             ),
             auth_user=Depends(self.service.providers.auth.auth_wrapper),
-        ) -> WrappedRAGResponse:
+        ) -> WrappedRAGResponse:  # type: ignore
             """
             Execute a RAG (Retrieval-Augmented Generation) query.
 
@@ -141,17 +179,10 @@ class RetrievalRouter(BaseRouter):
 
             The generation process can be customized using the rag_generation_config parameter.
             """
-            allowed_groups = set(auth_user.group_ids)
-            filters = {
-                "$or": [
-                    {"user_id": str(auth_user.id)},
-                    {"group_ids": {"$overlap": list(allowed_groups)}},
-                ]
-            }
-            if vector_search_settings.filters != {}:
-                filters = {"$and": [filters, vector_search_settings.filters]}
 
-            vector_search_settings.filters = filters
+            vector_search_settings.filters = self._select_filters(
+                auth_user, vector_search_settings
+            )
 
             response = await self.service.rag(
                 query=query,
@@ -167,10 +198,11 @@ class RetrievalRouter(BaseRouter):
                 async def stream_generator():
                     async for chunk in response:
                         yield chunk
+                        await asyncio.sleep(0)
 
                 return StreamingResponse(
                     stream_generator(), media_type="application/json"
-                )
+                )  # type: ignore
             else:
                 return response
 
@@ -183,8 +215,13 @@ class RetrievalRouter(BaseRouter):
         )
         @self.base_endpoint
         async def agent_app(
-            messages: list[Message] = Body(
-                ..., description=agent_descriptions.get("messages")
+            message: Optional[Message] = Body(
+                None, description=agent_descriptions.get("message")
+            ),
+            messages: Optional[list[Message]] = Body(
+                None,
+                description=agent_descriptions.get("messages"),
+                deprecated=True,
             ),
             vector_search_settings: VectorSearchSettings = Body(
                 default_factory=VectorSearchSettings,
@@ -208,8 +245,14 @@ class RetrievalRouter(BaseRouter):
                     "include_title_if_available"
                 ),
             ),
+            conversation_id: Optional[UUID] = Body(
+                None, description=agent_descriptions.get("conversation_id")
+            ),
+            branch_id: Optional[UUID] = Body(
+                None, description=agent_descriptions.get("branch_id")
+            ),
             auth_user=Depends(self.service.providers.auth.auth_wrapper),
-        ) -> WrappedRAGAgentResponse:
+        ) -> WrappedRAGAgentResponse:  # type: ignore
             """
             Implement an agent-based interaction for complex query processing.
 
@@ -220,39 +263,64 @@ class RetrievalRouter(BaseRouter):
             The agent's behavior can be customized using the rag_generation_config and
             task_prompt_override parameters.
             """
-            # TODO - Don't just copy paste the same code, refactor this
-            allowed_groups = set(auth_user.group_ids)
-            filters = {
-                "$or": [
-                    {"user_id": str(auth_user.id)},
-                    {"group_ids": {"$overlap": list(allowed_groups)}},
-                ]
-            }
-            if vector_search_settings.filters != {}:
-                filters = {"$and": [filters, vector_search_settings.filters]}
 
-            vector_search_settings.filters = filters
+            vector_search_settings.filters = self._select_filters(
+                auth_user, vector_search_settings
+            )
 
+            kg_search_settings.filters = vector_search_settings.filters
             try:
                 response = await self.service.agent(
+                    message=message,
                     messages=messages,
                     vector_search_settings=vector_search_settings,
                     kg_search_settings=kg_search_settings,
                     rag_generation_config=rag_generation_config,
                     task_prompt_override=task_prompt_override,
                     include_title_if_available=include_title_if_available,
+                    conversation_id=(
+                        str(conversation_id) if conversation_id else None
+                    ),
+                    branch_id=str(branch_id) if branch_id else None,
                 )
 
                 if rag_generation_config.stream:
 
                     async def stream_generator():
+                        content = ""
                         async for chunk in response:
                             yield chunk
+                            content += chunk
+                            await asyncio.sleep(0)
 
                     return StreamingResponse(
                         stream_generator(), media_type="application/json"
-                    )
+                    )  # type: ignore
                 else:
-                    return {"messages": response}
+                    return response
             except Exception as e:
                 raise R2RException(str(e), 500)
+
+        @self.router.post("/completion")
+        @self.base_endpoint
+        async def completion(
+            messages: list[Message] = Body(
+                ..., description="The messages to complete"
+            ),
+            generation_config: GenerationConfig = Body(
+                default_factory=GenerationConfig,
+                description="The generation config",
+            ),
+            auth_user=Depends(self.service.providers.auth.auth_wrapper),
+            response_model=WrappedCompletionResponse,
+        ):
+            """
+            Generate completions for a list of messages.
+
+            This endpoint uses the language model to generate completions for the provided messages.
+            The generation process can be customized using the generation_config parameter.
+            """
+            return await self.service.completion(
+                messages=messages,
+                generation_config=generation_config,
+            )

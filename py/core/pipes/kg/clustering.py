@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Any, AsyncGenerator, Optional
 from uuid import UUID
@@ -6,16 +5,12 @@ from uuid import UUID
 from core.base import (
     AsyncPipe,
     AsyncState,
-    Community,
     CompletionProvider,
     EmbeddingProvider,
-    Entity,
-    GenerationConfig,
     KGProvider,
     PipeType,
     PromptProvider,
     RunLoggingSingleton,
-    Triple,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,9 +27,9 @@ class KGClusteringPipe(AsyncPipe):
         llm_provider: CompletionProvider,
         prompt_provider: PromptProvider,
         embedding_provider: EmbeddingProvider,
+        config: AsyncPipe.PipeConfig,
         pipe_logger: Optional[RunLoggingSingleton] = None,
         type: PipeType = PipeType.OTHER,
-        config: Optional[AsyncPipe.PipeConfig] = None,
         *args,
         **kwargs,
     ):
@@ -53,28 +48,27 @@ class KGClusteringPipe(AsyncPipe):
 
     async def cluster_kg(
         self,
+        collection_id: UUID,
         leiden_params: dict,
-        generation_config: GenerationConfig,
     ):
         """
-        Clusters the knowledge graph triples into communities using hierarchical Leiden algorithm. Uses neo4j's graph data science library.
+        Clusters the knowledge graph triples into communities using hierarchical Leiden algorithm. Uses graspologic library.
         """
 
-        num_communities, num_hierarchies, intermediate_communities = (
-            self.kg_provider.perform_graph_clustering(leiden_params)
-        )
+        num_communities = await self.kg_provider.perform_graph_clustering(
+            collection_id,
+            leiden_params,
+        )  # type: ignore
 
         logger.info(
-            f"Clustering completed. Generated {num_communities} communities with {num_hierarchies} hierarchies with intermediate communities: {intermediate_communities}."
+            f"Clustering completed. Generated {num_communities} communities."
         )
 
         return {
             "num_communities": num_communities,
-            "num_hierarchies": num_hierarchies,
-            "intermediate_communities": intermediate_communities,
         }
 
-    async def _run_logic(
+    async def _run_logic(  # type: ignore
         self,
         input: AsyncPipe.Input,
         state: AsyncState,
@@ -86,14 +80,7 @@ class KGClusteringPipe(AsyncPipe):
         Executes the KG clustering pipe: clustering entities and triples into communities.
         """
 
+        collection_id = input.message["collection_id"]
         leiden_params = input.message["leiden_params"]
-        generation_config = input.message["generation_config"]
 
-        base_dimension = self.embedding_provider.config.base_dimension
-        vector_index_fn = self.kg_provider.create_vector_index
-        vector_index_fn("__ENTITY__", "name_embedding", base_dimension)
-        vector_index_fn("__ENTITY__", "description_embedding", base_dimension)
-        vector_index_fn("__RELATIONSHIP__", "description", base_dimension)
-        vector_index_fn("__Community__", "summary_embedding", base_dimension)
-
-        yield await self.cluster_kg(leiden_params, generation_config)
+        yield await self.cluster_kg(collection_id, leiden_params)

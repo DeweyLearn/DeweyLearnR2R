@@ -1,99 +1,178 @@
+# TODO: Clean this up and make it more congruent across the vector database and the relational database.
+
 import logging
 import os
-from typing import Optional
+import warnings
+from typing import Any, Optional
 
 from core.base import (
     CryptoProvider,
     DatabaseConfig,
     DatabaseProvider,
+    PostgresConfigurationSettings,
     RelationalDBProvider,
     VectorDBProvider,
 )
+from shared.abstractions.vector import VectorQuantizationType
 
 from .relational import PostgresRelationalDBProvider
-from .vecs import Client, create_client
 from .vector import PostgresVectorDBProvider
 
 logger = logging.getLogger(__name__)
 
 
+def get_env_var(new_var, old_var, config_value):
+    value = config_value or os.getenv(new_var) or os.getenv(old_var)
+    if os.getenv(old_var) and not os.getenv(new_var):
+        warnings.warn(
+            f"{old_var} is deprecated and support for it will be removed in release 3.5.0. Use {new_var} instead."
+        )
+    return value
+
+
 class PostgresDBProvider(DatabaseProvider):
+    user: str
+    password: str
+    host: str
+    port: int
+    db_name: str
+    project_name: str
+    connection_string: str
+    vector_db_dimension: int
+    conn: Optional[Any]
+    crypto_provider: CryptoProvider
+    postgres_configuration_settings: PostgresConfigurationSettings
+    default_collection_name: str
+    default_collection_description: str
+
     def __init__(
         self,
         config: DatabaseConfig,
         dimension: int,
-        crypto_provider: Optional[CryptoProvider] = None,
+        quantization_type: VectorQuantizationType,
+        crypto_provider: CryptoProvider,
         *args,
         **kwargs,
     ):
-        user = config.user or os.getenv("POSTGRES_USER")
-        if not user:
-            raise ValueError(
-                "Error, please set a valid POSTGRES_USER environment variable or set a 'user' in the 'database' settings of your `r2r.toml`."
-            )
-        password = config.password or os.getenv("POSTGRES_PASSWORD")
-        if not password:
-            raise ValueError(
-                "Error, please set a valid POSTGRES_PASSWORD environment variable or set a 'password' in the 'database' settings of your `r2r.toml`."
-            )
+        super().__init__(config)
 
-        host = config.host or os.getenv("POSTGRES_HOST")
-        if not host:
-            raise ValueError(
-                "Error, please set a valid POSTGRES_HOST environment variable or set a 'host' in the 'database' settings of your `r2r.toml`."
-            )
+        env_vars = [
+            ("user", "R2R_POSTGRES_USER", "POSTGRES_USER"),
+            ("password", "R2R_POSTGRES_PASSWORD", "POSTGRES_PASSWORD"),
+            ("host", "R2R_POSTGRES_HOST", "POSTGRES_HOST"),
+            ("port", "R2R_POSTGRES_PORT", "POSTGRES_PORT"),
+            ("db_name", "R2R_POSTGRES_DBNAME", "POSTGRES_DBNAME"),
+        ]
 
-        port = config.port or os.getenv("POSTGRES_PORT")
-        if not port:
-            raise ValueError(
-                "Error, please set a valid POSTGRES_PORT environment variable or set a 'port' in the 'database' settings of your `r2r.toml`."
-            )
+        for attr, new_var, old_var in env_vars:
+            if value := get_env_var(new_var, old_var, getattr(config, attr)):
+                setattr(self, attr, value)
+            else:
+                raise ValueError(
+                    f"Error, please set a valid {new_var} environment variable or set a '{attr}' in the 'database' settings of your `r2r.toml`."
+                )
 
-        db_name = config.db_name or os.getenv("POSTGRES_DBNAME")
-        if not db_name:
-            raise ValueError(
-                "Error, please set a valid POSTGRES_DBNAME environment variable or set a 'db_name' in the 'database' settings of your `r2r.toml`."
-            )
+        self.port = int(self.port)
 
-        collection_name = config.vecs_collection or os.getenv(
-            "POSTGRES_VECS_COLLECTION"
+        self.project_name = (
+            get_env_var(
+                "R2R_PROJECT_NAME",
+                "R2R_POSTGRES_PROJECT_NAME",  # Remove this after deprecation
+                config.app.project_name,
+            )
+            or "r2r_default"
         )
-        if not collection_name:
+
+        if not self.project_name:
             raise ValueError(
-                "Error, please set a valid POSTGRES_VECS_COLLECTION environment variable or set a 'vecs_collection' in the 'database' settings of your `r2r.toml`."
+                "Error, please set a valid R2R_PROJECT_NAME environment variable or set a 'project_name' in the 'database' settings of your `r2r.toml`."
             )
 
-        if not all([user, password, host, port, db_name, collection_name]):
-            raise ValueError(
-                "Error, please set the POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DBNAME, and POSTGRES_VECS_COLLECTION environment variables to use pgvector database."
-            )
-        try:
-            DB_CONNECTION = (
-                f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
-            )
-            self.vx: Client = create_client(DB_CONNECTION)
-        except Exception as e:
-            raise ValueError(
-                f"Error {e} occurred while attempting to connect to the pgvector provider with {DB_CONNECTION}."
-            )
+        # Check if it's a Unix socket connection
+        if self.host.startswith("/") and not self.port:
+            self.connection_string = f"postgresql://{self.user}:{self.password}@/{self.db_name}?host={self.host}"
+            logger.info("Connecting to Postgres via Unix socket")
+        else:
+            self.connection_string = f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.db_name}"
+            logger.info("Connecting to Postgres via TCP/IP")
+
         self.vector_db_dimension = dimension
-        self.collection_name = collection_name
+        self.vector_db_quantization_type = quantization_type
+        self.conn = None
         self.config: DatabaseConfig = config
         self.crypto_provider = crypto_provider
-        super().__init__(config)
+        self.postgres_configuration_settings: PostgresConfigurationSettings = (
+            self._get_postgres_configuration_settings(config)
+        )
+        self.default_collection_name = config.default_collection_name
+        self.default_collection_description = (
+            config.default_collection_description
+        )
+
+    def _get_table_name(self, base_name: str) -> str:
+        return f"{self.project_name}.{base_name}"
+
+    async def initialize(self):
+        self.vector = self._initialize_vector_db()
+        self.relational = await self._initialize_relational_db()
 
     def _initialize_vector_db(self) -> VectorDBProvider:
         return PostgresVectorDBProvider(
             self.config,
-            vx=self.vx,
-            collection_name=self.collection_name,
+            connection_string=self.connection_string,
+            project_name=self.project_name,
             dimension=self.vector_db_dimension,
+            quantization_type=self.vector_db_quantization_type,
         )
 
-    def _initialize_relational_db(self) -> RelationalDBProvider:
-        return PostgresRelationalDBProvider(
+    async def _initialize_relational_db(self) -> RelationalDBProvider:
+        relational_db = PostgresRelationalDBProvider(
             self.config,
-            vx=self.vx,
+            connection_string=self.connection_string,
             crypto_provider=self.crypto_provider,
-            collection_name=self.collection_name,
+            project_name=self.project_name,
+            postgres_configuration_settings=self.postgres_configuration_settings,
         )
+        await relational_db.initialize()
+        return relational_db
+
+    def _get_postgres_configuration_settings(
+        self, config: DatabaseConfig
+    ) -> PostgresConfigurationSettings:
+        settings = PostgresConfigurationSettings()
+
+        env_mapping = {
+            "max_connections": "R2R_POSTGRES_MAX_CONNECTIONS",
+            "shared_buffers": "R2R_POSTGRES_SHARED_BUFFERS",
+            "effective_cache_size": "R2R_POSTGRES_EFFECTIVE_CACHE_SIZE",
+            "maintenance_work_mem": "R2R_POSTGRES_MAINTENANCE_WORK_MEM",
+            "checkpoint_completion_target": "R2R_POSTGRES_CHECKPOINT_COMPLETION_TARGET",
+            "wal_buffers": "R2R_POSTGRES_WAL_BUFFERS",
+            "default_statistics_target": "R2R_POSTGRES_DEFAULT_STATISTICS_TARGET",
+            "random_page_cost": "R2R_POSTGRES_RANDOM_PAGE_COST",
+            "effective_io_concurrency": "R2R_POSTGRES_EFFECTIVE_IO_CONCURRENCY",
+            "work_mem": "R2R_POSTGRES_WORK_MEM",
+            "huge_pages": "R2R_POSTGRES_HUGE_PAGES",
+            "min_wal_size": "R2R_POSTGRES_MIN_WAL_SIZE",
+            "max_wal_size": "R2R_POSTGRES_MAX_WAL_SIZE",
+            "max_worker_processes": "R2R_POSTGRES_MAX_WORKER_PROCESSES",
+            "max_parallel_workers_per_gather": "R2R_POSTGRES_MAX_PARALLEL_WORKERS_PER_GATHER",
+            "max_parallel_workers": "R2R_POSTGRES_MAX_PARALLEL_WORKERS",
+            "max_parallel_maintenance_workers": "R2R_POSTGRES_MAX_PARALLEL_MAINTENANCE_WORKERS",
+        }
+
+        for setting, env_var in env_mapping.items():
+            value = getattr(
+                config.postgres_configuration_settings, setting, None
+            ) or os.getenv(env_var)
+
+            if value is not None and value != "":
+                field_type = settings.__annotations__[setting]
+                if field_type == Optional[int]:
+                    value = int(value)
+                elif field_type == Optional[float]:
+                    value = float(value)
+
+                setattr(settings, setting, value)
+
+        return settings

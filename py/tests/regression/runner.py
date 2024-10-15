@@ -20,11 +20,11 @@ class RegressionTestRunner:
         self.client = R2RClient(base_url=base_url)
         self.tests: List[BaseTest] = []
         self.test_order = [
-            # "TestDocumentManagement",
-            # "TestRetrieval",
+            "TestDocumentManagement",
+            "TestRetrieval",
             "TestUserManagement",
-            # "TestObservability",
-            # "TestGroupManagement",
+            "TestObservability",
+            "TestGroupManagement",
         ]
         self.check_only = check_only
         self.update_expected = update_expected

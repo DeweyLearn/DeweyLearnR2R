@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 
 from .auth import AuthMethods
 from .ingestion import IngestionMethods
+from .kg import KGMethods
 from .management import ManagementMethods
 from .models import R2RException
-from .restructure import RestructureMethods
 from .retrieval import RetrievalMethods
 from .server import ServerMethods
 
@@ -87,26 +87,26 @@ class R2RAsyncClient:
         self.client = custom_client or httpx.AsyncClient(timeout=timeout)
         self.timeout = timeout
 
-        # Initialize method groups
+        # Initialize methods grouop
         self._auth = AuthMethods
         self._ingestion = IngestionMethods
         self._management = ManagementMethods
-        self._restructure = RestructureMethods
+        self._kg = KGMethods
         self._retrieval = RetrievalMethods
         self._server = ServerMethods
 
-        # Collect all methods from the method groups
+        # Collect all methods from the methods group
         self._methods = {}
-        for group in [
+        for collection in [
             self._auth,
             self._ingestion,
             self._management,
-            self._restructure,
+            self._kg,
             self._retrieval,
             self._server,
         ]:
             for name, method in inspect.getmembers(
-                group, predicate=inspect.isfunction
+                collection, predicate=inspect.isfunction
             ):
                 if not name.startswith("_"):
                     self._methods[name] = method
@@ -131,7 +131,6 @@ class R2RAsyncClient:
             # Weird mocking fix...
             params = kwargs.pop("params", {})
             params = {**params, **EMPTY_ARGS}
-
             response = getattr(self.client, method.lower())(
                 url, headers=headers, params=params, **kwargs
             )

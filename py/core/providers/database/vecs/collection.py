@@ -8,10 +8,11 @@ All public classes, enums, and functions are re-exported by the top level `vecs`
 from __future__ import annotations
 
 import math
+import time
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 from uuid import UUID, uuid4
 
 from flupy import flu
@@ -33,6 +34,16 @@ from sqlalchemy.types import Float, UserDefinedType
 
 from core.base import VectorSearchResult
 from core.base.abstractions import VectorSearchSettings
+from shared.abstractions.vector import (
+    INDEX_MEASURE_TO_SQLA_ACC,
+    IndexArgsHNSW,
+    IndexArgsIVFFlat,
+    IndexMeasure,
+    IndexMethod,
+    VectorQuantizationType,
+    VectorTableName,
+)
+from shared.utils import _decorate_vector_type
 
 from .adapter import Adapter, AdapterContext, NoOp, Record
 from .exc import (
@@ -47,97 +58,35 @@ if TYPE_CHECKING:
     from vecs.client import Client
 
 
-class IndexMethod(str, Enum):
-    """
-    An enum representing the index methods available.
-
-    This class currently only supports the 'ivfflat' method but may
-    expand in the future.
-
-    Attributes:
-        auto (str): Automatically choose the best available index method.
-        ivfflat (str): The ivfflat index method.
-        hnsw (str): The hnsw index method.
-    """
-
-    auto = "auto"
-    ivfflat = "ivfflat"
-    hnsw = "hnsw"
-
-
-class IndexMeasure(str, Enum):
-    """
-    An enum representing the types of distance measures available for indexing.
-
-    Attributes:
-        cosine_distance (str): The cosine distance measure for indexing.
-        l2_distance (str): The Euclidean (L2) distance measure for indexing.
-        max_inner_product (str): The maximum inner product measure for indexing.
-    """
-
-    cosine_distance = "cosine_distance"
-    l2_distance = "l2_distance"
-    max_inner_product = "max_inner_product"
-
-
-@dataclass
-class IndexArgsIVFFlat:
-    """
-    A class for arguments that can optionally be supplied to the index creation
-    method when building an IVFFlat type index.
-
-    Attributes:
-        nlist (int): The number of IVF centroids that the index should use
-    """
-
-    n_lists: int
-
-
-@dataclass
-class IndexArgsHNSW:
-    """
-    A class for arguments that can optionally be supplied to the index creation
-    method when building an HNSW type index.
-
-    Ref: https://github.com/pgvector/pgvector#index-options
-
-    Both attributes are Optional in case the user only wants to specify one and
-    leave the other as default
-
-    Attributes:
-        m (int): Maximum number of connections per node per layer (default: 16)
-        ef_construction (int): Size of the dynamic candidate list for
-            constructing the graph (default: 64)
-    """
-
-    m: Optional[int] = 16
-    ef_construction: Optional[int] = 64
-
-
-INDEX_MEASURE_TO_OPS = {
-    # Maps the IndexMeasure enum options to the SQL ops string required by
-    # the pgvector `create index` statement
-    IndexMeasure.cosine_distance: "vector_cosine_ops",
-    IndexMeasure.l2_distance: "vector_l2_ops",
-    IndexMeasure.max_inner_product: "vector_ip_ops",
-}
-
-INDEX_MEASURE_TO_SQLA_ACC = {
-    IndexMeasure.cosine_distance: lambda x: x.cosine_distance,
-    IndexMeasure.l2_distance: lambda x: x.l2_distance,
-    IndexMeasure.max_inner_product: lambda x: x.max_inner_product,
-}
+def index_measure_to_ops(
+    measure: IndexMeasure, quantization_type: VectorQuantizationType
+):
+    return _decorate_vector_type(measure.ops, quantization_type)
 
 
 class Vector(UserDefinedType):
     cache_ok = True
 
-    def __init__(self, dim=None):
+    def __init__(
+        self,
+        dim=None,
+        quantization_type: Optional[
+            VectorQuantizationType
+        ] = VectorQuantizationType.FP32,
+    ):
         super(UserDefinedType, self).__init__()
         self.dim = dim
+        self.quantization_type = quantization_type
 
     def get_col_spec(self, **kw):
-        return "VECTOR" if self.dim is None else f"VECTOR({self.dim})"
+        col_spec = ""
+        if self.dim is None:
+            col_spec = _decorate_vector_type("", self.quantization_type)
+        else:
+            col_spec = _decorate_vector_type(
+                f"({self.dim})", self.quantization_type
+            )
+        return col_spec
 
     def bind_processor(self, dialect):
         def process(value):
@@ -193,17 +142,17 @@ class Collection:
     """
 
     COLUMN_VARS = [
-        "fragment_id",
         "extraction_id",
         "document_id",
         "user_id",
-        "group_ids",
+        "collection_ids",
     ]
 
     def __init__(
         self,
         name: str,
         dimension: int,
+        quantization_type: VectorQuantizationType,
         client: Client,
         adapter: Optional[Adapter] = None,
     ):
@@ -223,7 +172,14 @@ class Collection:
         self.client = client
         self.name = name
         self.dimension = dimension
-        self.table = _build_table(name, client.meta, dimension)
+        self.quantization_type = quantization_type
+        self.table = _build_table(
+            client.project_name,
+            name,
+            client.meta,
+            dimension,
+            quantization_type,
+        )
         self._index: Optional[str] = None
         self.adapter = adapter or Adapter(steps=[NoOp(dimension=dimension)])
 
@@ -237,13 +193,14 @@ class Collection:
                 if x is not None
             ]
         )
+
         if len(reported_dimensions) == 0:
             raise ArgError(
                 "One of dimension or adapter must provide a dimension"
             )
         elif len(reported_dimensions) > 1:
             raise MismatchedDimension(
-                "Mismatch in the reported dimensions of the selected vector collection and embedding model. Correct the selected embedding model or specify a new vector collection by modifying the `POSTGRES_VECS_COLLECTION` environment variable."
+                "Mismatch in the reported dimensions of the selected vector collection and embedding model. Correct the selected embedding model or specify a new vector collection by modifying the `R2R_PROJECT_NAME` environment variable."
             )
 
     def __repr__(self):
@@ -288,7 +245,7 @@ class Collection:
             join pg_attribute pa
                 on pc.oid = pa.attrelid
         where
-            pc.relnamespace = 'vecs'::regnamespace
+            pc.relnamespace = '{self.client.project_name}'::regnamespace
             and pc.relkind = 'r'
             and pa.attname = 'vec'
             and not pc.relname ^@ '_'
@@ -312,7 +269,7 @@ class Collection:
         )
         if len(reported_dimensions) > 1:
             raise MismatchedDimension(
-                "Mismatch in the reported dimensions of the selected vector collection and embedding model. Correct the selected embedding model or specify a new vector collection by modifying the `POSTGRES_VECS_COLLECTION` environment variable."
+                "Mismatch in the reported dimensions of the selected vector collection and embedding model. Correct the selected embedding model or specify a new vector collection by modifying the `R2R_PROJECT_NAME` environment variable."
             )
 
         if not collection_dimension:
@@ -346,7 +303,7 @@ class Collection:
                 text(
                     f"""
                     create index ix_meta_{unique_string}
-                      on vecs."{self.table.name}"
+                      on {self.client.project_name}."{self.table.name}"
                       using gin ( metadata jsonb_path_ops )
                     """
                 )
@@ -357,7 +314,7 @@ class Collection:
                 text(
                     f"""
                 CREATE TRIGGER tsvector_update_{unique_string} BEFORE INSERT OR UPDATE
-                ON vecs."{self.table.name}" FOR EACH ROW EXECUTE FUNCTION
+                ON {self.client.project_name}."{self.table.name}" FOR EACH ROW EXECUTE FUNCTION
                 tsvector_update_trigger(fts, 'pg_catalog.english', text);
             """
                 )
@@ -380,6 +337,26 @@ class Collection:
 
         return self
 
+    def _get_index_options(
+        self,
+        method: IndexMethod,
+        index_arguments: Optional[Union[IndexArgsIVFFlat, IndexArgsHNSW]],
+    ) -> str:
+        if method == IndexMethod.ivfflat:
+            if isinstance(index_arguments, IndexArgsIVFFlat):
+                return f"WITH (lists={index_arguments.n_lists})"
+            else:
+                # Default value if no arguments provided
+                return "WITH (lists=100)"
+        elif method == IndexMethod.hnsw:
+            if isinstance(index_arguments, IndexArgsHNSW):
+                return f"WITH (m={index_arguments.m}, ef_construction={index_arguments.ef_construction})"
+            else:
+                # Default values if no arguments provided
+                return "WITH (m=16, ef_construction=64)"
+        else:
+            return ""  # No options for other methods
+
     def upsert(
         self,
         records: Iterable[Record],
@@ -396,26 +373,24 @@ class Collection:
                     stmt = postgresql.insert(self.table).values(
                         [
                             {
-                                "fragment_id": record[0],
-                                "extraction_id": record[1],
-                                "document_id": record[2],
-                                "user_id": record[3],
-                                "group_ids": record[4],
-                                "vec": record[5],
-                                "text": record[6],
-                                "metadata": record[7],
-                                "fts": func.to_tsvector(record[6]),
+                                "extraction_id": record[0],
+                                "document_id": record[1],
+                                "user_id": record[2],
+                                "collection_ids": record[3],
+                                "vec": record[4],
+                                "text": record[5],
+                                "metadata": record[6],
+                                "fts": func.to_tsvector(record[5]),
                             }
                             for record in chunk
                         ]
                     )
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=[self.table.c.fragment_id],
+                        index_elements=[self.table.c.extraction_id],
                         set_=dict(
-                            extraction_id=stmt.excluded.extraction_id,
                             document_id=stmt.excluded.document_id,
                             user_id=stmt.excluded.user_id,
-                            group_ids=stmt.excluded.group_ids,
+                            collection_ids=stmt.excluded.collection_ids,
                             vec=stmt.excluded.vec,
                             text=stmt.excluded.text,
                             metadata=stmt.excluded.metadata,
@@ -425,29 +400,29 @@ class Collection:
                     sess.execute(stmt)
         return None
 
-    def fetch(self, fragment_ids: Iterable[UUID]) -> List[Record]:
+    def fetch(self, ids: Iterable[UUID]) -> list[Record]:
         """
-        Fetches vectors from the collection by their fragment identifiers.
+        Fetches vectors from the collection by their identifiers.
 
         Args:
-            fragment_ids (Iterable[UUID]): An iterable of vector fragment identifiers.
+            ids (Iterable[UUID]): An iterable of vector identifiers.
 
         Returns:
-            List[Record]: A list of the fetched vectors.
+            list[Record]: A list of the fetched vectors.
 
         Raises:
-            ArgError: If fragment_ids is not an iterable of UUIDs.
+            ArgError: If ids is not an iterable of UUIDs.
         """
-        if isinstance(fragment_ids, (str, UUID)):
-            raise ArgError("fragment_ids must be an iterable of UUIDs")
+        if isinstance(ids, (str, UUID)):
+            raise ArgError("ids must be an iterable of UUIDs")
 
         chunk_size = 12
         records = []
         with self.client.Session() as sess:
             with sess.begin():
-                for id_chunk in flu(fragment_ids).chunk(chunk_size):
+                for id_chunk in flu(ids).chunk(chunk_size):
                     stmt = select(self.table).where(
-                        self.table.c.fragment_id.in_(id_chunk)
+                        self.table.c.extraction_id.in_(id_chunk)
                     )
                     chunk_records = sess.execute(stmt)
                     records.extend(chunk_records)
@@ -455,58 +430,54 @@ class Collection:
 
     def delete(
         self,
-        fragment_ids: Optional[Iterable[UUID]] = None,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Dict[str, str]]:
+        ids: Optional[Iterable[UUID]] = None,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> dict[str, dict[str, str]]:
         """
-        Deletes vectors from the collection by matching filters or fragment_ids.
+        Deletes vectors from the collection by matching filters or ids.
 
         Args:
-            fragment_ids (Optional[Iterable[UUID]], optional): An iterable of vector fragment identifiers.
-            filters (Optional[Dict], optional): Filters to apply to the search. Defaults to None.
+            extraction_ids (Optional[Iterable[UUID]], optional): An iterable of vector fragment identifiers.
+            filters (Optional[dict], optional): Filters to apply to the search. Defaults to None.
 
         Returns:
-            Dict[str, Dict[str, str]]: A dictionary of deleted records, where the key is the fragment_id
-            and the value is a dictionary containing 'document_id', 'extraction_id', 'fragment_id', and 'text'.
+            dict[str, dict[str, str]]: A dictionary of deleted records, where the key is the extraction_id
+            and the value is a dictionary containing 'document_id', 'extraction_id', and 'text'.
 
         Raises:
-            ArgError: If neither fragment_ids nor filters are provided, or if both are provided.
+            ArgError: If neither ids nor filters are provided, or if both are provided.
         """
-        if fragment_ids is None and filters is None:
-            raise ArgError("Either fragment_ids or filters must be provided.")
+        if ids is None and filters is None:
+            raise ArgError("Either ids or filters must be provided.")
 
-        if fragment_ids is not None and filters is not None:
-            raise ArgError(
-                "Either fragment_ids or filters must be provided, not both."
-            )
+        if ids is not None and filters is not None:
+            raise ArgError("Either ids or filters must be provided, not both.")
 
-        if isinstance(fragment_ids, (str, UUID)):
-            raise ArgError("fragment_ids must be an iterable of UUIDs")
+        if isinstance(ids, (str, UUID)):
+            raise ArgError("ids must be an iterable of UUIDs")
 
         deleted_records = {}
 
         with self.client.Session() as sess:
             with sess.begin():
-                if fragment_ids:
-                    for id_chunk in flu(fragment_ids).chunk(12):
+                if ids:
+                    for id_chunk in flu(ids).chunk(12):
                         delete_stmt = (
                             delete(self.table)
-                            .where(self.table.c.fragment_id.in_(id_chunk))
+                            .where(self.table.c.extraction_id.in_(id_chunk))
                             .returning(
-                                self.table.c.fragment_id,
-                                self.table.c.document_id,
                                 self.table.c.extraction_id,
+                                self.table.c.document_id,
                                 self.table.c.text,
                             )
                         )
                         result = sess.execute(delete_stmt)
                         for row in result:
-                            fragment_id = str(row[0])
-                            deleted_records[fragment_id] = {
-                                "fragment_id": fragment_id,
+                            extraction_id = str(row[0])
+                            deleted_records[extraction_id] = {
+                                "extraction_id": extraction_id,
                                 "document_id": str(row[1]),
-                                "extraction_id": str(row[2]),
-                                "text": row[3],
+                                "text": row[2],
                             }
 
                 if filters:
@@ -515,20 +486,18 @@ class Collection:
                         delete(self.table)
                         .where(meta_filter)
                         .returning(
-                            self.table.c.fragment_id,
-                            self.table.c.document_id,
                             self.table.c.extraction_id,
+                            self.table.c.document_id,
                             self.table.c.text,
                         )
                     )
                     result = sess.execute(delete_stmt)
                     for row in result:
-                        fragment_id = str(row[0])
-                        deleted_records[fragment_id] = {
-                            "fragment_id": fragment_id,
+                        extraction_id = str(row[0])
+                        deleted_records[extraction_id] = {
+                            "extraction_id": extraction_id,
                             "document_id": str(row[1]),
-                            "extraction_id": str(row[2]),
-                            "text": row[3],
+                            "text": row[2],
                         }
         return deleted_records
 
@@ -555,7 +524,7 @@ class Collection:
         self,
         vector: list[float],
         search_settings: VectorSearchSettings,
-    ) -> Union[List[Record], List[str]]:
+    ) -> Union[list[Record], list[str]]:
         """
         Executes a similarity search in the collection.
 
@@ -566,7 +535,7 @@ class Collection:
             search_settings (VectorSearchSettings): The search settings to use.
 
         Returns:
-            Union[List[Record], List[str]]: The result of the similarity search.
+            Union[list[Record], list[str]]: The result of the similarity search.
         """
 
         try:
@@ -589,11 +558,10 @@ class Collection:
         distance_clause = distance_lambda(self.table.c.vec)(vector)
 
         cols = [
-            self.table.c.fragment_id,
             self.table.c.extraction_id,
             self.table.c.document_id,
             self.table.c.user_id,
-            self.table.c.group_ids,
+            self.table.c.collection_ids,
             self.table.c.text,
         ]
         if search_settings.include_values:
@@ -604,10 +572,11 @@ class Collection:
 
         stmt = select(*cols)
 
-        # if filters:
-        stmt = stmt.filter(self.build_filters(search_settings.filters))  # type: ignore
+        if search_settings.filters:
+            stmt = stmt.filter(self.build_filters(search_settings.filters))
 
         stmt = stmt.order_by(distance_clause)
+        stmt = stmt.offset(search_settings.offset)
         stmt = stmt.limit(search_settings.search_limit)
 
         with self.client.Session() as sess:
@@ -622,15 +591,21 @@ class Collection:
                     sess.execute(
                         text(
                             "set local hnsw.ef_search = :ef_search"
-                        ).bindparams(ef_search=search_settings.ef_search)
+                        ).bindparams(
+                            ef_search=max(
+                                search_settings.ef_search,
+                                search_settings.search_limit,
+                            )
+                        )
                     )
                 if len(cols) == 1:
                     return [str(x) for x in sess.scalars(stmt).fetchall()]
-                return sess.execute(stmt).fetchall() or []
+                result = sess.execute(stmt).fetchall()
+                return result or []
 
     def full_text_search(
         self, query_text: str, search_settings: VectorSearchSettings
-    ) -> List[VectorSearchResult]:
+    ) -> list[VectorSearchResult]:
         # Create a tsquery from the input query
         ts_query = func.websearch_to_tsquery("english", query_text)
 
@@ -642,11 +617,10 @@ class Collection:
         # Build the main query
         stmt = (
             select(
-                self.table.c.fragment_id,
                 self.table.c.extraction_id,
                 self.table.c.document_id,
                 self.table.c.user_id,
-                self.table.c.group_ids,
+                self.table.c.collection_ids,
                 self.table.c.text,
                 self.table.c.metadata,
                 rank_function,
@@ -654,6 +628,7 @@ class Collection:
             .where(self.table.c.fts.op("@@")(ts_query))
             .where(self.build_filters(search_settings.filters))
             .order_by(rank_function.desc())
+            .offset(search_settings.offset)
             .limit(search_settings.hybrid_search_settings.full_text_limit)
         )
 
@@ -664,11 +639,10 @@ class Collection:
         # Convert the results to VectorSearchResult objects
         return [
             VectorSearchResult(
-                fragment_id=str(r.fragment_id),
                 extraction_id=str(r.extraction_id),
                 document_id=str(r.document_id),
                 user_id=str(r.user_id),
-                group_ids=r.group_ids,
+                collection_ids=r.collection_ids,
                 text=r.text,
                 score=float(r.rank),
                 metadata=r.metadata,
@@ -676,15 +650,14 @@ class Collection:
             for r in results
         ]
 
-    def build_filters(self, filters: Dict):
+    def build_filters(self, filters: dict):
         """
         PUBLIC
 
         Builds filters for SQL query based on provided dictionary.
 
         Args:
-            table: The SQLAlchemy table object.
-            filters (Dict): The dictionary specifying filter conditions.
+            filters (dict): The dictionary specifying filter conditions.
 
         Raises:
             FilterError: If filter conditions are not correctly formatted.
@@ -702,6 +675,7 @@ class Collection:
                 column = getattr(self.table.c, key)
                 if isinstance(value, dict):
                     op, clause = next(iter(value.items()))
+
                     if op == "$eq":
                         return column == clause
                     elif op == "$ne":
@@ -715,7 +689,7 @@ class Collection:
                     elif op == "$contains":
                         return column.contains(clause)
                     elif op == "$any":
-                        if key == "group_ids":
+                        if key == "collection_ids":
                             # Use ANY for UUID array comparison
                             return func.array_to_string(column, ",").like(
                                 f"%{clause}%"
@@ -727,12 +701,15 @@ class Collection:
                             f"Unsupported operator for column {key}: {op}"
                         )
                 else:
+                    # Handle direct equality
+                    if isinstance(value, str):
+                        value = UUID(value)
                     return column == value
             else:
                 # Handle JSON-based filters
                 json_col = self.table.c.metadata
                 if key.startswith("metadata."):
-                    key.split("metadata.")[1]
+                    key = key.split("metadata.")[1]
                 if isinstance(value, dict):
                     if len(value) > 1:
                         raise FilterError("only one operator permitted")
@@ -807,7 +784,7 @@ class Collection:
         return parse_filter(filters)
 
     @classmethod
-    def _list_collections(cls, client: "Client") -> List["Collection"]:
+    def _list_collections(cls, client: "Client") -> list["Collection"]:
         """
         PRIVATE
 
@@ -817,7 +794,7 @@ class Collection:
             client (Client): The database client.
 
         Returns:
-            List[Collection]: A list of all existing collections.
+            list[Collection]: A list of all existing collections.
         """
 
         query = text(
@@ -830,7 +807,7 @@ class Collection:
             join pg_attribute pa
                 on pc.oid = pa.attrelid
         where
-            pc.relnamespace = 'vecs'::regnamespace
+            pc.relnamespace = '{client.project_name}'::regnamespace
             and pc.relkind = 'r'
             and pa.attname = 'vec'
             and not pc.relname ^@ '_'
@@ -881,13 +858,13 @@ class Collection:
 
         if self._index is None:
             query = text(
-                """
+                f"""
             select
                 relname as table_name
             from
                 pg_class pc
             where
-                pc.relnamespace = 'vecs'::regnamespace
+                pc.relnamespace = '{self.client.project_name}'::regnamespace
                 and relname ilike 'ix_vector%'
                 and pc.relkind = 'i'
             """
@@ -912,7 +889,7 @@ class Collection:
         if index_name is None:
             return False
 
-        ops = INDEX_MEASURE_TO_OPS.get(measure)
+        ops = index_measure_to_ops(measure, self.quantization_type)
         if ops is None:
             return False
 
@@ -921,14 +898,27 @@ class Collection:
 
         return False
 
+    def close(self):
+        """
+        Closes the database connection associated with this collection.
+
+        This method should be called when you are done using the collection to release
+        the database resources.
+        """
+        if self.client:
+            self.client.close()
+
     def create_index(
         self,
+        table_name: Optional[VectorTableName] = None,
         measure: IndexMeasure = IndexMeasure.cosine_distance,
         method: IndexMethod = IndexMethod.auto,
         index_arguments: Optional[
             Union[IndexArgsIVFFlat, IndexArgsHNSW]
         ] = None,
-        replace=True,
+        replace: bool = True,
+        concurrently: bool = True,
+        quantization_type: VectorQuantizationType = VectorQuantizationType.FP32,
     ) -> None:
         """
         Creates an index for the collection.
@@ -957,11 +947,26 @@ class Collection:
             method (IndexMethod, optional): The indexing method to use. Defaults to 'auto'.
             index_arguments: (IndexArgsIVFFlat | IndexArgsHNSW, optional): Index type specific arguments
             replace (bool, optional): Whether to replace the existing index. Defaults to True.
-
+            concurrently (bool, optional): Whether to create the index concurrently. Defaults to True.
         Raises:
             ArgError: If an invalid index method is used, or if *replace* is False and an index already exists.
         """
 
+        if table_name == VectorTableName.CHUNKS:
+            table_name = f"{self.client.project_name}.{self.table.name}"
+            col_name = "vec"
+        elif table_name == VectorTableName.ENTITIES:
+            table_name = (
+                f"{self.client.project_name}.{VectorTableName.ENTITIES}"
+            )
+            col_name = "description_embedding"
+        elif table_name == VectorTableName.COMMUNITIES:
+            table_name = (
+                f"{self.client.project_name}.{VectorTableName.COMMUNITIES}"
+            )
+            col_name = "embedding"
+        else:
+            raise ArgError("invalid table name")
         if method not in (
             IndexMethod.ivfflat,
             IndexMethod.hnsw,
@@ -1001,85 +1006,81 @@ class Collection:
                 "HNSW Unavailable. Upgrade your pgvector installation to > 0.5.0 to enable HNSW support"
             )
 
-        ops = INDEX_MEASURE_TO_OPS.get(measure)
+        ops = index_measure_to_ops(
+            measure, quantization_type=self.quantization_type
+        )
+
         if ops is None:
             raise ArgError("Unknown index measure")
 
-        unique_string = str(uuid4()).replace("-", "_")[0:7]
+        concurrently_sql = "CONCURRENTLY" if concurrently else ""
 
-        with self.client.Session() as sess:
-            with sess.begin():
-                if self.index is not None:
-                    if replace:
-                        sess.execute(text(f'drop index vecs."{self.index}";'))
-                        self._index = None
-                    else:
-                        raise ArgError(
-                            "replace is set to False but an index exists"
-                        )
-
-                if method == IndexMethod.ivfflat:
-                    if not index_arguments:
-                        n_records: int = sess.execute(func.count(self.table.c.id)).scalar()  # type: ignore
-
-                        n_lists = (
-                            int(max(n_records / 1000, 30))
-                            if n_records < 1_000_000
-                            else int(math.sqrt(n_records))
-                        )
-                    else:
-                        # The following mypy error is ignored because mypy
-                        # complains that `index_arguments` is typed as a union
-                        # of IndexArgsIVFFlat and IndexArgsHNSW types,
-                        # which both don't necessarily contain the `n_lists`
-                        # parameter, however we have validated that the
-                        # correct type is being used above.
-                        n_lists = index_arguments.n_lists  # type: ignore
-
-                    sess.execute(
-                        text(
-                            f"""
-                            create index ix_{ops}_ivfflat_nl{n_lists}_{unique_string}
-                              on vecs."{self.table.name}"
-                              using ivfflat (vec {ops}) with (lists={n_lists})
-                            """
-                        )
+        # Drop existing index if needed (must be outside of transaction)
+        # Doesn't drop
+        if self.index is not None and replace:
+            drop_index_sql = f'DROP INDEX {concurrently_sql} IF EXISTS {self.client.project_name}."{self.index}";'
+            try:
+                with self.client.engine.connect() as connection:
+                    connection = connection.execution_options(
+                        isolation_level="AUTOCOMMIT"
                     )
+                    connection.execute(text(drop_index_sql))
+            except Exception as e:
+                raise Exception(f"Failed to drop existing index: {e}")
+            self._index = None
 
-                if method == IndexMethod.hnsw:
-                    if not index_arguments:
-                        index_arguments = IndexArgsHNSW()
+        timestamp = time.strftime("%Y%m%d%H%M%S")
+        index_name = f"ix_{ops}_{method}__{timestamp}"
 
-                    # See above for explanation of why the following lines
-                    # are ignored
-                    m = index_arguments.m  # type: ignore
-                    ef_construction = index_arguments.ef_construction  # type: ignore
+        create_index_sql = f"""
+        CREATE INDEX {concurrently_sql} {index_name}
+        ON {table_name}
+        USING {method} ({col_name} {ops}) {self._get_index_options(method, index_arguments)};
+        """
 
-                    sess.execute(
-                        text(
-                            f"""
-                            create index ix_{ops}_hnsw_m{m}_efc{ef_construction}_{unique_string}
-                              on vecs."{self.table.name}"
-                              using hnsw (vec {ops}) WITH (m={m}, ef_construction={ef_construction});
-                            """
-                        )
+        try:
+            if concurrently:
+                with self.client.engine.connect() as connection:
+                    connection = connection.execution_options(
+                        isolation_level="AUTOCOMMIT"
                     )
+                    connection.execute(text(create_index_sql))
+            else:
+                with self.client.Session() as sess:
+                    sess.execute(text(create_index_sql))
+                    sess.commit()
+        except Exception as e:
+            raise Exception(f"Failed to create index: {e}")
+
+        self._index = index_name
 
         return None
 
 
-def _build_table(name: str, meta: MetaData, dimension: int) -> Table:
+def _build_table(
+    project_name: str,
+    name: str,
+    meta: MetaData,
+    dimension: int,
+    quantization_type: VectorQuantizationType = VectorQuantizationType.FP32,
+) -> Table:
+
     table = Table(
         name,
         meta,
-        Column("fragment_id", postgresql.UUID, primary_key=True),
-        Column("extraction_id", postgresql.UUID, nullable=False),
+        Column("extraction_id", postgresql.UUID, primary_key=True),
         Column("document_id", postgresql.UUID, nullable=False),
         Column("user_id", postgresql.UUID, nullable=False),
         Column(
-            "group_ids", postgresql.ARRAY(postgresql.UUID), server_default="{}"
+            "collection_ids",
+            postgresql.ARRAY(postgresql.UUID),
+            server_default="{}",
         ),
-        Column("vec", Vector(dimension), nullable=False),
+        Column(
+            "vec",
+            Vector(dimension, quantization_type=quantization_type),
+            nullable=False,
+        ),
         Column("text", postgresql.TEXT, nullable=True),
         Column(
             "fts",

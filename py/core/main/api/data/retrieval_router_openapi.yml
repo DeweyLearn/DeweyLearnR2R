@@ -12,7 +12,7 @@ search:
               query="Who is Aristotle?",
               vector_search_settings={
                   "use_vector_search": True,
-                  "filters": {"document_id": {"eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
+                  "filters": {"document_id": {"$eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
                   "search_limit": 20,
                   "use_hybrid_search": True
               },
@@ -20,7 +20,7 @@ search:
                   "use_kg_search": True, # graph needs to be constructed first
                   "kg_search_type": "local",
                   "kg_search_level": "0",
-                  "kg_search_generation_config": {
+                  "generation_config": {
                       "model": "gpt-4o-mini",
                       "temperature": 0.7,
                   },
@@ -42,7 +42,7 @@ search:
               "query": "Who is Aristotle?",
               "vector_search_settings": {
                 "use_vector_search": true,
-                "filters": {"document_id": {"eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
+                "filters": {"document_id": {"$eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
                 "search_limit": 20,
                 "use_hybrid_search": true
               },
@@ -50,7 +50,7 @@ search:
                 "use_kg_search": true, # graph needs to be constructed first
                 "kg_search_type": "local",
                 "kg_search_level": "0",
-                "kg_search_generation_config": {
+                "generation_config": {
                     "model": "gpt-4o-mini",
                     "temperature": 0.7
                 },
@@ -83,7 +83,7 @@ rag:
               query="Who is Aristotle?",
               vector_search_settings={
                   "use_vector_search": True,
-                  "filters": {"document_id": {"eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
+                  "filters": {"document_id": {"$eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
                   "search_limit": 20,
                   "use_hybrid_search": True
               },
@@ -91,7 +91,7 @@ rag:
                   "use_kg_search": True,
                   "kg_search_type": "local",
                   "kg_search_level": "0",
-                  "kg_search_generation_config": {
+                  "generation_config": {
                       "model": "gpt-4o-mini",
                       "temperature": 0.7,
                   },
@@ -118,7 +118,7 @@ rag:
               "query": "Who is Aristotle?",
               "vector_search_settings": {
                 "use_vector_search": true,
-                "filters": {"document_id": {"eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
+                "filters": {"document_id": {"$eq": "3e157b3a-8469-51db-90d9-52e7d896b49b"}},
                 "search_limit": 20,
                 "use_hybrid_search": True
               },
@@ -126,7 +126,7 @@ rag:
                 "use_kg_search": true, # graph needs to be constructed first
                 "kg_search_type": "local",
                 "kg_search_level": "0",
-                "kg_search_generation_config": {
+                "generation_config": {
                     "model": "gpt-4o-mini",
                     "temperature": 0.7
                 },
@@ -173,7 +173,7 @@ agent:
               ],
               vector_search_settings={
                   "use_vector_search": True,
-                  "filters": {"document_id": {"eq": "5e157b3a-8469-51db-90d9-52e7d896b49b"}},
+                  "filters": {"document_id": {"$eq": "5e157b3a-8469-51db-90d9-52e7d896b49b"}},
                   "search_limit": 20,
                   "use_hybrid_search": True
               },
@@ -197,7 +197,7 @@ agent:
               ],
               "vector_search_settings": {
                 "use_vector_search": true,
-                "filters": {"document_id": {"eq": "5e157b3a-8469-51db-90d9-52e7d896b49b"}},
+                "filters": {"document_id": {"$eq": "5e157b3a-8469-51db-90d9-52e7d896b49b"}},
                 "search_limit": 20,
                 "use_hybrid_search": true
               },
@@ -213,10 +213,13 @@ agent:
             }'
 
   input_descriptions:
-    messages: "List of message objects"
+    messages: "List of message objects (deprecated, use message instead)"
+    message: "Message object"
     vector_search_settings: "Vector search settings"
     kg_search_settings: "Knowledge graph search settings"
     rag_generation_config: "RAG generation configuration"
     task_prompt_override: "Task prompt override"
     include_title_if_available: "Includes document title in chunk response, if available."
     rag_strategy: "The RAG strategy to use (default | hyde | rag_fusion)"
+    conversation_id: "The ID of the conversation, a new ID is assigned if not provided"
+    branch_id: "The ID of the branch"

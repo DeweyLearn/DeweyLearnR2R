@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from abc import ABCMeta
 from typing import AsyncGenerator, Generator, Optional
 
@@ -6,9 +7,12 @@ from core.base.abstractions import (
     AsyncSyncMeta,
     LLMChatCompletion,
     LLMChatCompletionChunk,
+    Message,
     syncable,
 )
-from core.base.agent import Agent, Message
+from core.base.agent import Agent, Conversation
+
+logger = logging.getLogger(__name__)
 
 
 class CombinedMeta(AsyncSyncMeta, ABCMeta):
@@ -39,42 +43,53 @@ class R2RAgent(Agent, metaclass=CombinedMeta):
 
     def _reset(self):
         self._completed = False
-        self.conversation = []
+        self.conversation = Conversation()
 
     @syncable
     async def arun(
         self,
+        messages: list[Message],
         system_instruction: Optional[str] = None,
-        messages: Optional[list[Message]] = None,
         *args,
         **kwargs,
-    ) -> list[LLMChatCompletion]:
+    ) -> list[dict]:
+        # TODO - Make this method return a list of messages.
         self._reset()
-
-        if system_instruction or not self.conversation:
-            self._setup(system_instruction)
+        await self._setup(system_instruction)
 
         if messages:
-            self.conversation.extend(messages)
+            for message in messages:
+                await self.conversation.add_message(message)
 
         while not self._completed:
-            generation_config = self.get_generation_config(
-                self.conversation[-1]
-            )
+            messages_list = await self.conversation.get_messages()
+            generation_config = self.get_generation_config(messages_list[-1])
             response = await self.llm_provider.aget_completion(
-                [
-                    ele.model_dump(exclude_none=True)
-                    for ele in self.conversation
-                ],
+                messages_list,
                 generation_config,
             )
             await self.process_llm_response(response, *args, **kwargs)
 
-        return self.conversation
+        # Get the output messages
+        all_messages: list[dict] = await self.conversation.get_messages()
+        all_messages.reverse()
+
+        output_messages = []
+        for message_2 in all_messages:
+            if (
+                message_2.get("content")
+                and message_2.get("content") != messages[-1].content
+            ):
+                output_messages.append(message_2)
+            else:
+                break
+        output_messages.reverse()
+
+        return output_messages
 
     async def process_llm_response(
         self, response: LLMChatCompletion, *args, **kwargs
-    ) -> str:
+    ) -> None:
         if not self._completed:
             message = response.choices[0].message
             if message.function_call:
@@ -93,45 +108,41 @@ class R2RAgent(Agent, metaclass=CombinedMeta):
                         **kwargs,
                     )
             else:
-                self.conversation.append(
+                await self.conversation.add_message(
                     Message(role="assistant", content=message.content)
                 )
                 self._completed = True
 
 
-class R2RStreamingAgent(Agent):
-    async def arun(
+class R2RStreamingAgent(R2RAgent):
+    async def arun(  # type: ignore
         self,
         system_instruction: Optional[str] = None,
         messages: Optional[list[Message]] = None,
         *args,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        try:
-            if system_instruction or not self.conversation:
-                self._setup(system_instruction)
+        self._reset()
+        await self._setup(system_instruction)
 
-            if messages:
-                self.conversation.extend(messages)
+        if messages:
+            for message in messages:
+                await self.conversation.add_message(message)
 
-            while not self._completed:
-                generation_config = self.get_generation_config(
-                    self.conversation[-1], stream=True
-                )
-                stream = self.llm_provider.get_completion_stream(
-                    [
-                        ele.model_dump(exclude_none=True)
-                        for ele in self.conversation
-                    ],
-                    generation_config,
-                )
-                async for chunk in self.process_llm_response(
-                    stream, *args, **kwargs
-                ):
-                    yield chunk
-        finally:
-            self._completed = False
-            self.conversation = []
+        while not self._completed:
+            messages_list = await self.conversation.get_messages()
+
+            generation_config = self.get_generation_config(
+                messages_list[-1], stream=True
+            )
+            stream = self.llm_provider.get_completion_stream(
+                messages_list,
+                generation_config,
+            )
+            async for chunk in self.process_llm_response(
+                stream, *args, **kwargs
+            ):
+                yield chunk
 
     def run(
         self, system_instruction, messages, *args, **kwargs
@@ -140,8 +151,11 @@ class R2RStreamingAgent(Agent):
             self.arun(system_instruction, messages, *args, **kwargs)
         )
 
-    async def process_llm_response(
-        self, stream: LLMChatCompletionChunk, *args, **kwargs
+    async def process_llm_response(  # type: ignore
+        self,
+        stream: Generator[LLMChatCompletionChunk, None, None],
+        *args,
+        **kwargs,
     ) -> AsyncGenerator[str, None]:
         function_name = None
         function_arguments = ""
@@ -151,18 +165,30 @@ class R2RStreamingAgent(Agent):
             delta = chunk.choices[0].delta
             if delta.tool_calls:
                 for tool_call in delta.tool_calls:
+                    if not tool_call.function:
+                        logger.info("Tool function not found in tool call.")
+                        continue
+                    name = tool_call.function.name
+                    if not name:
+                        logger.info("Tool name not found in tool call.")
+                        continue
+                    arguments = tool_call.function.arguments
+                    if not arguments:
+                        logger.info("Tool arguments not found in tool call.")
+                        continue
+
                     results = await self.handle_function_or_tool_call(
-                        tool_call.function.name,
-                        tool_call.function.arguments,
+                        name,
+                        arguments,
                         # FIXME: tool_call.id,
                         *args,
                         **kwargs,
                     )
 
                     yield "<tool_call>"
-                    yield f"<name>{tool_call.function.name}</name>"
-                    yield f"<arguments>{tool_call.function.arguments}</arguments>"
-                    yield f"<results>{results}</results>"
+                    yield f"<name>{name}</name>"
+                    yield f"<arguments>{arguments}</arguments>"
+                    yield f"<results>{results.llm_formatted_result}</results>"
                     yield "</tool_call>"
 
             if delta.function_call:
@@ -177,6 +203,10 @@ class R2RStreamingAgent(Agent):
                 yield delta.content
 
             if chunk.choices[0].finish_reason == "function_call":
+                if not function_name:
+                    logger.info("Function name not found in function call.")
+                    continue
+
                 yield "<function_call>"
                 yield f"<name>{function_name}</name>"
                 yield f"<arguments>{function_arguments}</arguments>"
@@ -193,12 +223,18 @@ class R2RStreamingAgent(Agent):
                 function_name = None
                 function_arguments = ""
 
-                self.arun(*args, **kwargs)
-
             elif chunk.choices[0].finish_reason == "stop":
                 if content_buffer:
-                    self.conversation.append(
+                    await self.conversation.add_message(
                         Message(role="assistant", content=content_buffer)
                     )
                 self._completed = True
                 yield "</completion>"
+
+        # Handle any remaining content after the stream ends
+        if content_buffer and not self._completed:
+            await self.conversation.add_message(
+                Message(role="assistant", content=content_buffer)
+            )
+            self._completed = True
+            yield "</completion>"

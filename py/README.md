@@ -1,3 +1,19 @@
+<<<<<<< HEAD
+=======
+<p align="left">
+  <a href="https://r2r-docs.sciphi.ai"><img src="https://img.shields.io/badge/docs.sciphi.ai-3F16E4" alt="Docs"></a>
+  <a href="https://discord.gg/p6KqD2kjtB"><img src="https://img.shields.io/discord/1120774652915105934?style=social&logo=discord" alt="Discord"></a>
+  <a href="https://github.com/SciPhi-AI"><img src="https://img.shields.io/github/stars/SciPhi-AI/R2R" alt="Github Stars"></a>
+  <a href="https://github.com/SciPhi-AI/R2R/pulse"><img src="https://img.shields.io/github/commit-activity/w/SciPhi-AI/R2R" alt="Commits-per-week"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-purple.svg" alt="License: MIT"></a>
+</p>
+
+<img width="1041" alt="r2r" src="https://github.com/user-attachments/assets/b6ee6a78-5d37-496d-ae10-ce18eee7a1d6">
+<h3 align="center">
+Build, scale, and deploy state of the art Retrieval-Augmented Generation applications.
+</h3>
+
+>>>>>>> upstream/main
 # About
 R2R was designed to bridge the gap between local LLM experimentation and scalable, production-ready Retrieval-Augmented Generation (RAG). R2R provides a comprehensive and SOTA RAG system for developers, built around a RESTful API for ease of use.
 
@@ -71,6 +87,7 @@ cd R2R
 pip install .
 ```
 
+<<<<<<< HEAD
 Then, run the following command to start all containers:
 
 For hosted LLMs (e.g., OpenAI):
@@ -200,8 +217,26 @@ Completion:
                 'message': {
                     'content': "Aristotle (384–322 BC) was an Ancient Greek philosopher and polymath whose writings covered a broad range of subjects including the natural sciences,
                     ...
+=======
+
+You may run R2R directly from the python package, but additional dependencies like Postgres+pgvector must be configured and the full R2R core is required:
+
+```bash
+# export OPENAI_API_KEY=sk-...
+# export POSTGRES...
+pip install 'r2r[core,ingestion-bundle]'
+r2r --config-name=default serve
+>>>>>>> upstream/main
 ```
 
+Alternatively, R2R can be launched alongside its requirements inside Docker:
+
+```bash
+# export OPENAI_API_KEY=sk-...
+r2r serve --docker --full
+```
+
+The command above will install the `full` installation which includes Hatchet for orchestration and Unstructured.io for parsing.
 
 
 ## Stream a RAG Response
@@ -222,7 +257,16 @@ Building with R2R is easy - see the `hello_r2r` example below:
 
 ```python
 
+<<<<<<< HEAD
 from r2r import Document, GenerationConfig, R2R
+=======
+- Auth & Admin Features
+  - [Web Development](https://r2r-docs.sciphi.ai/cookbooks/web-dev): Building webapps using R2R
+  - [User Auth](https://r2r-docs.sciphi.ai/cookbooks/user-auth): Authenticating users
+  - [Collections](https://r2r-docs.sciphi.ai/cookbooks/collections): Document collections
+  - [Analytics & Observability](https://r2r-docs.sciphi.ai/cookbooks/observability): End-to-end logging and analytics
+  - [Web Application](https://r2r-docs.sciphi.ai/cookbooks/application): Connecting with the R2R Application
+>>>>>>> upstream/main
 
 app = R2R() # You may pass a custom configuration to `R2R`
 

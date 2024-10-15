@@ -4,36 +4,45 @@ import time
 from abc import abstractmethod
 from enum import Enum
 from typing import Any, Optional
+from litellm import AuthenticationError
 
-from ..abstractions import EmbeddingPurpose, default_embedding_prefixes
-from ..abstractions.search import VectorSearchResult
+from shared.abstractions.vector import VectorQuantizationSettings
+
+from ..abstractions import (
+    EmbeddingPurpose,
+    VectorSearchResult,
+    default_embedding_prefixes,
+)
 from .base import Provider, ProviderConfig
 
 logger = logging.getLogger(__name__)
 
 
 class EmbeddingConfig(ProviderConfig):
-    provider: Optional[str] = None
-    base_model: Optional[str] = None
-    base_dimension: Optional[int] = None
+    provider: str
+    base_model: str
+    base_dimension: int
     rerank_model: Optional[str] = None
     rerank_dimension: Optional[int] = None
     rerank_transformer_type: Optional[str] = None
     batch_size: int = 1
     prefixes: Optional[dict[str, str]] = None
     add_title_as_prefix: bool = True
-    concurrent_request_limit: int = 16
-    max_retries: int = 2
-    initial_backoff: float = 1.0
-    max_backoff: float = 60.0
+    concurrent_request_limit: int = 256
+    max_retries: int = 8
+    initial_backoff: float = 1
+    max_backoff: float = 64.0
+    quantization_settings: VectorQuantizationSettings = (
+        VectorQuantizationSettings()
+    )
 
-    def validate(self) -> None:
+    def validate_config(self) -> None:
         if self.provider not in self.supported_providers:
             raise ValueError(f"Provider '{self.provider}' is not supported.")
 
     @property
     def supported_providers(self) -> list[str]:
-        return [None, "litellm", "openai", "ollama"]
+        return ["litellm", "openai", "ollama"]
 
 
 class EmbeddingProvider(Provider):
@@ -60,6 +69,8 @@ class EmbeddingProvider(Provider):
             try:
                 async with self.semaphore:
                     return await self._execute_task(task)
+            except AuthenticationError as e:
+                raise
             except Exception as e:
                 logger.warning(
                     f"Request failed (attempt {retries + 1}): {str(e)}"
@@ -76,6 +87,8 @@ class EmbeddingProvider(Provider):
         while retries < self.config.max_retries:
             try:
                 return self._execute_task_sync(task)
+            except AuthenticationError as e:
+                raise
             except Exception as e:
                 logger.warning(
                     f"Request failed (attempt {retries + 1}): {str(e)}"
@@ -154,12 +167,6 @@ class EmbeddingProvider(Provider):
         stage: PipeStage = PipeStage.RERANK,
         limit: int = 10,
     ):
-        pass
-
-    @abstractmethod
-    def tokenize_string(
-        self, text: str, model: str, stage: PipeStage
-    ) -> list[int]:
         pass
 
     def set_prefixes(self, config_prefixes: dict[str, str], base_model: str):

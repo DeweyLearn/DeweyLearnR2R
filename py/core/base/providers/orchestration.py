@@ -1,47 +1,69 @@
 from abc import abstractmethod
-from typing import Any, Callable
-
-from hatchet_sdk import Hatchet
+from enum import Enum
+from typing import Any
 
 from .base import Provider, ProviderConfig
 
 
+class Workflow(Enum):
+    INGESTION = "ingestion"
+    KG = "kg"
+
+
 class OrchestrationConfig(ProviderConfig):
     provider: str
-    max_threads: int = 256
+    max_runs: int = 2_048
+    kg_creation_concurrency_limit: int = 32
+    ingestion_concurrency_limit: int = 64
 
-    def validate(self) -> None:
+    def validate_config(self) -> None:
         if self.provider not in self.supported_providers:
             raise ValueError(f"Provider {self.provider} is not supported.")
 
     @property
     def supported_providers(self) -> list[str]:
-        return ["hatchet"]
+        return ["hatchet", "simple"]
 
 
 class OrchestrationProvider(Provider):
     def __init__(self, config: OrchestrationConfig):
         super().__init__(config)
         self.config = config
-        self.orchestrator = Hatchet()
         self.worker = None
 
     @abstractmethod
-    def register_workflow(self, workflow: Any) -> None:
+    async def start_worker(self):
         pass
 
     @abstractmethod
-    def get_worker(self, name: str, max_threads: int) -> Any:
+    def get_worker(self, name: str, max_runs: int) -> Any:
         pass
 
     @abstractmethod
-    def workflow(self, *args, **kwargs) -> Callable:
+    def step(self, *args, **kwargs) -> Any:
         pass
 
     @abstractmethod
-    def step(self, *args, **kwargs) -> Callable:
+    def workflow(self, *args, **kwargs) -> Any:
         pass
 
     @abstractmethod
-    def start_worker(self):
+    def failure(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    def register_workflows(
+        self, workflow: Workflow, service: Any, messages: dict
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def run_workflow(
+        self,
+        workflow_name: str,
+        parameters: dict,
+        options: dict,
+        *args,
+        **kwargs,
+    ) -> dict[str, str]:
         pass

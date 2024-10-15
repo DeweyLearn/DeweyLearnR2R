@@ -1,8 +1,9 @@
+# type: ignore
 from typing import AsyncGenerator
 
 from bs4 import BeautifulSoup
 
-from core.base.abstractions.document import DataType
+from core.base.abstractions import DataType
 from core.base.parsers.base_parser import AsyncParser
 
 
@@ -14,7 +15,9 @@ class MDParser(AsyncParser[DataType]):
 
         self.markdown = markdown
 
-    async def ingest(self, data: DataType) -> AsyncGenerator[str, None]:
+    async def ingest(
+        self, data: DataType, *args, **kwargs
+    ) -> AsyncGenerator[str, None]:
         """Ingest Markdown data and yield text."""
         if isinstance(data, bytes):
             data = data.decode("utf-8")

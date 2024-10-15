@@ -7,18 +7,19 @@ from typing import Any, Optional
 import toml
 from pydantic import BaseModel
 
-from ..base.abstractions.llm import GenerationConfig
+from ..base.abstractions import GenerationConfig
 from ..base.agent.agent import AgentConfig
 from ..base.logging.run_logger import LoggingConfig
+from ..base.providers import AppConfig
 from ..base.providers.auth import AuthConfig
-from ..base.providers.chunking import ChunkingConfig
 from ..base.providers.crypto import CryptoConfig
 from ..base.providers.database import DatabaseConfig
 from ..base.providers.embedding import EmbeddingConfig
 from ..base.providers.file import FileConfig
+from ..base.providers.ingestion import IngestionConfig
 from ..base.providers.kg import KGConfig
 from ..base.providers.llm import CompletionConfig
-from ..base.providers.parsing import ParsingConfig
+from ..base.providers.orchestration import OrchestrationConfig
 from ..base.providers.prompt import PromptConfig
 
 logger = logging.getLogger(__name__)
@@ -31,15 +32,17 @@ class R2RConfig:
         current_file_path, "..", "..", "r2r.toml"
     )
 
-    CONFIG_OPTIONS = {}
-    for file in os.listdir(config_dir_root):
-        if file.endswith(".toml"):
-            CONFIG_OPTIONS[file.removesuffix(".toml")] = os.path.join(
-                config_dir_root, file
+    CONFIG_OPTIONS: dict[str, Optional[str]] = {}
+    for file_ in os.listdir(config_dir_root):
+        if file_.endswith(".toml"):
+            CONFIG_OPTIONS[file_.removesuffix(".toml")] = os.path.join(
+                config_dir_root, file_
             )
     CONFIG_OPTIONS["default"] = None
 
     REQUIRED_KEYS: dict[str, list] = {
+        "app": [],
+        "completion": ["provider"],
         "crypto": ["provider"],
         "auth": ["provider"],
         "embedding": [
@@ -49,32 +52,33 @@ class R2RConfig:
             "batch_size",
             "add_title_as_prefix",
         ],
+        "ingestion": ["provider"],
         "kg": [
             "provider",
             "batch_size",
             "kg_enrichment_settings",
         ],
-        "parsing": ["provider", "excluded_parsers"],
-        "chunking": ["provider"],
-        "completion": ["provider"],
         "logging": ["provider", "log_table"],
         "prompt": ["provider"],
         "database": ["provider"],
         "agent": ["generation_config"],
         "file": ["provider"],
+        "orchestration": ["provider"],
     }
+
+    app: AppConfig
     auth: AuthConfig
-    chunking: ChunkingConfig
     completion: CompletionConfig
     crypto: CryptoConfig
     database: DatabaseConfig
     embedding: EmbeddingConfig
+    ingestion: IngestionConfig
     kg: KGConfig
     logging: LoggingConfig
-    parsing: ParsingConfig
     prompt: PromptConfig
     agent: AgentConfig
     file: FileConfig
+    orchestration: OrchestrationConfig
 
     def __init__(
         self, config_data: dict[str, Any], base_path: Optional[Path] = None
@@ -116,25 +120,24 @@ class R2RConfig:
                         base_path / default_config[section]["file_path"]
                     )
             setattr(self, section, default_config[section])
-        self.completion = CompletionConfig.create(**self.completion)
+
+        self.app = AppConfig.create(**self.app)  # type: ignore
+        self.auth = AuthConfig.create(**self.auth, app=self.app)  # type: ignore
+        self.completion = CompletionConfig.create(**self.completion, app=self.app)  # type: ignore
+        self.crypto = CryptoConfig.create(**self.crypto, app=self.app)  # type: ignore
+        self.database = DatabaseConfig.create(**self.database, app=self.app)  # type: ignore
+        self.embedding = EmbeddingConfig.create(**self.embedding, app=self.app)  # type: ignore
+        self.ingestion = IngestionConfig.create(**self.ingestion, app=self.app)  # type: ignore
+        self.kg = KGConfig.create(**self.kg, app=self.app)  # type: ignore
+        self.logging = LoggingConfig.create(**self.logging, app=self.app)  # type: ignore
+        self.prompt = PromptConfig.create(**self.prompt, app=self.app)  # type: ignore
+        self.agent = AgentConfig.create(**self.agent, app=self.app)  # type: ignore
+        self.file = FileConfig.create(**self.file, app=self.app)  # type: ignore
+        self.orchestration = OrchestrationConfig.create(**self.orchestration, app=self.app)  # type: ignore
         # override GenerationConfig defaults
         GenerationConfig.set_default(
             **self.completion.generation_config.dict()
         )
-
-        self.auth = AuthConfig.create(**self.auth)
-        self.chunking = ChunkingConfig.create(**self.chunking)
-        self.crypto = CryptoConfig.create(**self.crypto)
-        self.database = DatabaseConfig.create(**self.database)
-        self.embedding = EmbeddingConfig.create(**self.embedding)
-        self.kg = KGConfig.create(**self.kg)
-        self.logging = LoggingConfig.create(**self.logging)
-        if "chunking_config" not in self.parsing:
-            self.parsing["chunking_config"] = self.chunking
-        self.parsing = ParsingConfig.create(**self.parsing)
-        self.prompt = PromptConfig.create(**self.prompt)
-        self.agent = AgentConfig.create(**self.agent)
-        self.file = FileConfig.create(**self.file)
 
     def _validate_config_section(
         self, config_data: dict[str, Any], section: str, keys: list
@@ -149,7 +152,7 @@ class R2RConfig:
             )
 
     @classmethod
-    def from_toml(cls, config_path: str = None) -> "R2RConfig":
+    def from_toml(cls, config_path: Optional[str] = None) -> "R2RConfig":
         if config_path is None:
             config_path = R2RConfig.default_config_path
 
@@ -166,19 +169,6 @@ class R2RConfig:
         }
         return toml.dumps(config_data)
 
-    def save_to_redis(self, redis_client: Any, key: str):
-        redis_client.set(f"R2RConfig:{key}", self.to_toml())
-
-    @classmethod
-    def load_from_redis(cls, redis_client: Any, key: str) -> "R2RConfig":
-        config_data = redis_client.get(f"R2RConfig:{key}")
-        if config_data is None:
-            raise ValueError(
-                f"Configuration not found in Redis with key '{key}'"
-            )
-        config_data = toml.loads(config_data)
-        return cls(config_data)
-
     @classmethod
     def load_default_config(cls) -> dict:
         with open(R2RConfig.default_config_path) as f:
@@ -192,7 +182,7 @@ class R2RConfig:
                 for k, v in config_section.items()
             }
         elif isinstance(config_section, (list, tuple)):
-            return [
+            return [  # type: ignore
                 R2RConfig._serialize_config(item) for item in config_section
             ]
         elif isinstance(config_section, Enum):
@@ -217,10 +207,20 @@ class R2RConfig:
         if config_path and config_name:
             raise ValueError("Cannot specify both config_path and config_name")
 
-        if config_path := os.getenv("CONFIG_PATH") or config_path:
+        # TODO: Remove CONFIG_PATH and CONFIG_NAME in a future release
+        if (
+            config_path := os.getenv("R2R_CONFIG_PATH")
+            or os.getenv("CONFIG_PATH")
+            or config_path
+        ):
             return cls.from_toml(config_path)
-        else:
-            config_name = os.getenv("CONFIG_NAME") or config_name or "default"
-            if config_name not in R2RConfig.CONFIG_OPTIONS:
-                raise ValueError(f"Invalid config name: {config_name}")
-            return cls.from_toml(R2RConfig.CONFIG_OPTIONS[config_name])
+
+        config_name = (
+            os.getenv("R2R_CONFIG_NAME")
+            or os.getenv("CONFIG_NAME")
+            or config_name
+            or "default"
+        )
+        if config_name not in R2RConfig.CONFIG_OPTIONS:
+            raise ValueError(f"Invalid config name: {config_name}")
+        return cls.from_toml(R2RConfig.CONFIG_OPTIONS[config_name])

@@ -1,56 +1,49 @@
-from typing import Optional
-
 from pydantic import BaseModel
 
 from core.agent import R2RRAGAgent, R2RStreamingRAGAgent
 from core.base.pipes import AsyncPipe
 from core.base.providers import (
     AuthProvider,
-    ChunkingProvider,
     CompletionProvider,
     DatabaseProvider,
     EmbeddingProvider,
     FileProvider,
+    IngestionProvider,
     KGProvider,
     OrchestrationProvider,
-    ParsingProvider,
     PromptProvider,
 )
 from core.pipelines import RAGPipeline, SearchPipeline
 
 
 class R2RProviders(BaseModel):
-    auth: Optional[AuthProvider]
-    chunking: Optional[ChunkingProvider]
-    database: Optional[DatabaseProvider]
-    kg: Optional[KGProvider]
-    llm: Optional[CompletionProvider]
-    embedding: Optional[EmbeddingProvider]
-    orchestration: Optional[OrchestrationProvider]
-    prompt: Optional[PromptProvider]
-    parsing: Optional[ParsingProvider]
-    file: Optional[FileProvider]
+    auth: AuthProvider
+    database: DatabaseProvider
+    ingestion: IngestionProvider
+    embedding: EmbeddingProvider
+    file: FileProvider
+    kg: KGProvider
+    llm: CompletionProvider
+    orchestration: OrchestrationProvider
+    prompt: PromptProvider
 
     class Config:
         arbitrary_types_allowed = True
 
 
 class R2RPipes(BaseModel):
-    parsing_pipe: Optional[AsyncPipe]
-    chunking_pipe: Optional[AsyncPipe]
-    embedding_pipe: Optional[AsyncPipe]
-    vector_storage_pipe: Optional[AsyncPipe]
-    vector_search_pipe: Optional[AsyncPipe]
-    rag_pipe: Optional[AsyncPipe]
-    streaming_rag_pipe: Optional[AsyncPipe]
-    kg_search_pipe: Optional[AsyncPipe]
-    kg_extraction_pipe: Optional[AsyncPipe]
-    kg_storage_pipe: Optional[AsyncPipe]
-    kg_node_extraction_pipe: Optional[AsyncPipe]
-    kg_node_description_pipe: Optional[AsyncPipe]
-    kg_clustering_pipe: Optional[AsyncPipe]
-    kg_community_summary_pipe: Optional[AsyncPipe]
-    chunking_pipe: Optional[AsyncPipe]
+    parsing_pipe: AsyncPipe
+    embedding_pipe: AsyncPipe
+    kg_search_pipe: AsyncPipe
+    kg_triples_extraction_pipe: AsyncPipe
+    kg_storage_pipe: AsyncPipe
+    kg_entity_description_pipe: AsyncPipe
+    kg_clustering_pipe: AsyncPipe
+    kg_community_summary_pipe: AsyncPipe
+    rag_pipe: AsyncPipe
+    streaming_rag_pipe: AsyncPipe
+    vector_storage_pipe: AsyncPipe
+    vector_search_pipe: AsyncPipe
 
     class Config:
         arbitrary_types_allowed = True

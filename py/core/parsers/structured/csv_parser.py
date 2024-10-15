@@ -1,6 +1,7 @@
+# type: ignore
 from typing import IO, AsyncGenerator, Optional, Union
 
-from core.base.abstractions.document import DataType
+from core.base.abstractions import DataType
 from core.base.parsers.base_parser import AsyncParser
 
 
@@ -15,7 +16,7 @@ class CSVParser(AsyncParser[DataType]):
         self.StringIO = StringIO
 
     async def ingest(
-        self, data: Union[str, bytes]
+        self, data: Union[str, bytes], *args, **kwargs
     ) -> AsyncGenerator[str, None]:
         """Ingest CSV data and yield text from each row."""
         if isinstance(data, bytes):
@@ -38,7 +39,6 @@ class CSVParserAdvanced(AsyncParser[DataType]):
     def get_delimiter(
         self, file_path: Optional[str] = None, file: Optional[IO[bytes]] = None
     ):
-
         sniffer = self.csv.Sniffer()
         num_bytes = 65536
 
@@ -53,7 +53,11 @@ class CSVParserAdvanced(AsyncParser[DataType]):
         return sniffer.sniff(data, delimiters=",;").delimiter
 
     async def ingest(
-        self, data: Union[str, bytes], num_col_times_num_rows: int = 100
+        self,
+        data: Union[str, bytes],
+        num_col_times_num_rows: int = 100,
+        *args,
+        **kwargs,
     ) -> AsyncGenerator[str, None]:
         """Ingest CSV data and yield text from each row."""
         if isinstance(data, bytes):

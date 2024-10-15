@@ -4,18 +4,15 @@ from contextlib import ExitStack
 from typing import Optional, Union
 from uuid import UUID
 
-from .models import ChunkingConfig
-
 
 class IngestionMethods:
-
     @staticmethod
     async def ingest_files(
         client,
         file_paths: list[str],
         document_ids: Optional[list[Union[str, UUID]]] = None,
         metadatas: Optional[list[dict]] = None,
-        chunking_config: Optional[Union[dict, ChunkingConfig]] = None,
+        ingestion_config: Optional[dict] = None,
     ) -> dict:
         """
         Ingest files into your R2R deployment
@@ -24,7 +21,7 @@ class IngestionMethods:
             file_paths (List[str]): List of file paths to ingest.
             document_ids (Optional[List[str]]): List of document IDs.
             metadatas (Optional[List[dict]]): List of metadata dictionaries for each file.
-            chunking_config (Optional[Union[dict, ChunkingConfig]]): Custom chunking configuration.
+            ingestion_config (Optional[Union[dict]]): Custom chunking configuration.
 
         Returns:
             dict: Ingestion results containing processed, failed, and skipped documents.
@@ -37,14 +34,8 @@ class IngestionMethods:
             raise ValueError(
                 "Number of metadatas must match number of document IDs."
             )
-        if (
-            chunking_config is not None
-            and chunking_config is not ChunkingConfig
-        ):
-            # check if the provided dict maps to a ChunkingConfig
-            ChunkingConfig(**chunking_config)
 
-        all_file_paths = []
+        all_file_paths: list[str] = []
         for path in file_paths:
             if os.path.isdir(path):
                 for root, _, files in os.walk(path):
@@ -55,7 +46,7 @@ class IngestionMethods:
                 all_file_paths.append(path)
 
         with ExitStack() as stack:
-            files = [
+            files_tuples = [
                 (
                     "files",
                     (
@@ -67,25 +58,19 @@ class IngestionMethods:
                 for file in all_file_paths
             ]
 
-            data = {
-                "metadatas": json.dumps(metadatas) if metadatas else None,
-                "document_ids": (
-                    json.dumps([str(doc_id) for doc_id in document_ids])
-                    if document_ids
-                    else None
-                ),
-                "chunking_config": (
-                    json.dumps(
-                        chunking_config.model_dump()
-                        if isinstance(chunking_config, ChunkingConfig)
-                        else chunking_config
-                    )
-                    if chunking_config
-                    else None
-                ),
-            }
+            data = {}
+            if document_ids:
+                data["document_ids"] = json.dumps(
+                    [str(doc_id) for doc_id in document_ids]
+                )
+            if metadatas:
+                data["metadatas"] = json.dumps(metadatas)
+
+            if ingestion_config:
+                data["ingestion_config"] = json.dumps(ingestion_config)
+
             return await client._make_request(
-                "POST", "ingest_files", data=data, files=files
+                "POST", "ingest_files", data=data, files=files_tuples
             )
 
     @staticmethod
@@ -94,7 +79,7 @@ class IngestionMethods:
         file_paths: list[str],
         document_ids: Optional[list[Union[str, UUID]]] = None,
         metadatas: Optional[list[dict]] = None,
-        chunking_config: Optional[Union[dict, ChunkingConfig]] = None,
+        ingestion_config: Optional[dict] = None,
     ) -> dict:
         """
         Update existing files in your R2R deployment.
@@ -103,7 +88,7 @@ class IngestionMethods:
             file_paths (List[str]): List of file paths to update.
             document_ids (List[str]): List of document IDs to update.
             metadatas (Optional[List[dict]]): List of updated metadata dictionaries for each file.
-            chunking_config (Optional[Union[dict, ChunkingConfig]]): Custom chunking configuration.
+            ingestion_config (Optional[Union[dict]]): Custom chunking configuration.
 
         Returns:
             dict: Update results containing processed, failed, and skipped documents.
@@ -137,13 +122,36 @@ class IngestionMethods:
                 )
             if metadatas:
                 data["metadatas"] = json.dumps(metadatas)
-            if chunking_config:
-                data["chunking_config"] = (
-                    chunking_config.model_dump()
-                    if isinstance(chunking_config, ChunkingConfig)
-                    else chunking_config
-                )
+            if ingestion_config:
+                data["ingestion_config"] = json.dumps(ingestion_config)
 
             return await client._make_request(
                 "POST", "update_files", data=data, files=files
             )
+
+    @staticmethod
+    async def ingest_chunks(
+        client,
+        chunks: list[dict],
+        document_id: Optional[UUID] = None,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        """
+        Ingest files into your R2R deployment
+
+        Args:
+            file_paths (List[str]): List of file paths to ingest.
+            document_ids (Optional[List[str]]): List of document IDs.
+            metadatas (Optional[List[dict]]): List of metadata dictionaries for each file.
+            ingestion_config (Optional[Union[dict]]): Custom chunking configuration.
+
+        Returns:
+            dict: Ingestion results containing processed, failed, and skipped documents.
+        """
+
+        data = {
+            "chunks": chunks,
+            "document_id": document_id,
+            "metadata": metadata,
+        }
+        return await client._make_request("POST", "ingest_chunks", json=data)
